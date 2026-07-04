@@ -34,22 +34,23 @@ async function testConnection(sequelize, name) {
  
 if (process.env.STAGE == "PROD") {
   // PRIMARY: this project is c25, so invt/other/tally (exported as invtDB/otherDB/tallyDB,
-  // used throughout the app) point at the c25 (Oakter) databases.
-  invt = new Sequelize(`${process.env.DB_OAKTER_INVT_DBNAME}`, `${process.env.DB_USER}`, `${process.env.DB_PASS}`, {
+  // used throughout the app) point at the c25 (Oakter) databases, using the dedicated
+  // Oakter DB credentials.
+  invt = new Sequelize(`${process.env.DB_OAKTER_INVT_DBNAME}`, `${process.env.DB_OAKTER_USER}`, `${process.env.DB_OAKTER_PASS}`, {
     host: `${process.env.DB_HOST}`,
     dialect: "mysql",
     dialectOptions: options,
     pool: poolOption, timezone: "+05:30"
   });
 
-  other = new Sequelize(`${process.env.DB_OAKTER_OTHER_DBNAME}`, `${process.env.DB_USER}`, `${process.env.DB_PASS}`, {
+  other = new Sequelize(`${process.env.DB_OAKTER_OTHER_DBNAME}`, `${process.env.DB_OAKTER_USER}`, `${process.env.DB_OAKTER_PASS}`, {
     host: `${process.env.DB_HOST}`,
     dialect: "mysql",
     dialectOptions: options,
     pool: poolOption, timezone: "+05:30"
   });
 
-  tally = new Sequelize(`${process.env.DB_OAKTER_TALLY_DBNAME}`, `${process.env.DB_USER}`, `${process.env.DB_PASS}`, {
+  tally = new Sequelize(`${process.env.DB_OAKTER_TALLY_DBNAME}`, `${process.env.DB_OAKTER_USER}`, `${process.env.DB_OAKTER_PASS}`, {
     host: `${process.env.DB_HOST}`,
     dialect: "mysql",
     dialectOptions: options,
