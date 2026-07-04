@@ -32,7 +32,7 @@ router.post("/getJobworkChallan", [auth.isAuthorized], async (req, res) => {
       return res.json({
         success: false,
         status: "error",
-        message: validation.errors.all(),
+        message: "something you missing in form field to supply",
       });
     }
 
