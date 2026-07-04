@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Private Chat</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      #chat {
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 300px;
+        overflow-y: auto;
+        margin-bottom: 10px;
+      }
+      input,
+      button {
+        padding: 5px;
+        margin: 5px;
+      }
+      .message {
+        margin: 3px 0;
+      }
+      .message.self {
+        color: green;
+      }
+      .message.other {
+        color: blue;
+      }
+      .typing {
+        font-style: italic;
+        color: gray;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Private Chat</h2>
+
+    <label>Your UserID:</label>
+    <input type="text" id="userID" placeholder="Enter your UserID" />
+    <button id="registerBtn">Connect</button>
+    <br /><br />
+
+    <label>Chat with UserID:</label>
+    <input type="text" id="toUserID" placeholder="Recipient UserID" />
+    <br /><br />
+
+    <div id="chat"></div>
+
+    <div class="typing" id="typingStatus"></div>
+
+    <input
+      type="text"
+      id="message"
+      placeholder="Type a message"
+      style="width: 300px"
+    />
+    <button id="sendBtn">Send</button>
+    <br /><br />
+
+    <label>Send Media (max 5MB):</label>
+    <input type="file" id="mediaFile" />
+    <button id="sendMediaBtn">Send File</button>
+
+    <script>
+      const socket = io("http://localhost:3002", {
+        reconnection: true,
+        transports: ["websocket"],
+      });
+
+      let userID = null;
+      let toUserID = null;
+      const chatDiv = document.getElementById("chat");
+      const typingStatusDiv = document.getElementById("typingStatus");
+
+      // ---------------- Register user ----------------
+      document.getElementById("registerBtn").onclick = () => {
+        userID = document.getElementById("userID").value.trim();
+        toUserID = document.getElementById("toUserID").value.trim();
+        if (!userID) return alert("Enter your UserID");
+        if (!toUserID) return alert("Enter recipient UserID");
+        socket.emit("register_user", userID);
+        appendMessage(`✅ Connected as ${userID}`);
+      };
+
+      // ---------------- Send text ----------------
+      document.getElementById("sendBtn").onclick = () => {
+        const msg = document.getElementById("message").value.trim();
+        if (!msg) return;
+        socket.emit("private_message", {
+          fromUserID: userID,
+          toUserID,
+          message: msg,
+          type: "text",
+        });
+        appendMessage(`🟢 To ${toUserID}: ${msg}`, true);
+        document.getElementById("message").value = "";
+      };
+
+      // ---------------- Typing status ----------------
+      document.getElementById("message").addEventListener("input", () => {
+        socket.emit("typing", { fromUserID: userID, toUserID });
+      });
+
+      socket.on("typing", ({ fromUserID }) => {
+        typingStatusDiv.textContent = `${fromUserID} is typing...`;
+        setTimeout(() => (typingStatusDiv.textContent = ""), 2000);
+      });
+
+      // ---------------- Send media ----------------
+      document.getElementById("sendMediaBtn").onclick = () => {
+        const fileInput = document.getElementById("mediaFile");
+        const file = fileInput.files[0];
+        if (!file) return alert("Select a file");
+        if (file.size > 5 * 1024 * 1024) return alert("Max file size 5MB");
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          socket.emit("private_message", {
+            fromUserID: userID,
+            toUserID,
+            message: reader.result,
+            fileName: file.name,
+            type: "file",
+          });
+          appendMessage(`🟢 Sent file: ${file.name}`, true);
+          fileInput.value = "";
+        };
+        reader.readAsDataURL(file);
+      };
+
+      // ---------------- Receive private messages ----------------
+      socket.on(
+        "receive_private_message",
+        ({ fromUserID, message, type, fileName }) => {
+          if (type === "text") {
+            appendMessage(`🔵 From ${fromUserID}: ${message}`, false);
+          } else if (type === "file") {
+            const link = document.createElement("a");
+            link.href = message;
+            link.download = fileName;
+            link.textContent = `🔵 From ${fromUserID}: Download ${fileName}`;
+            link.className = "message other";
+            chatDiv.appendChild(link);
+            chatDiv.appendChild(document.createElement("br"));
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+          }
+        }
+      );
+
+      // ---------------- Helper ----------------
+      function appendMessage(msg, self = false) {
+        const p = document.createElement("p");
+        p.textContent = msg;
+        p.className = self ? "message self" : "message other";
+        chatDiv.appendChild(p);
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+      }
+    </script>
+  </body>
+</html>

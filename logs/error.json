@@ -1,0 +1,119 @@
+[
+  {
+    "errorId": "9833796979",
+    "timestamp": "2026-03-27 12:38:40",
+    "ip": "::ffff:192.168.1.8",
+    "method": "POST",
+    "url": "/auth/signin",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "error": {
+      "name": "ReferenceError",
+      "message": "token is not defined",
+      "stack": "ReferenceError: token is not defined    at coreLoginFlow (D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\routes\\login\\login.js:479:44)    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)    at async D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\routes\\login\\login.js:545:17",
+      "code": null,
+      "status": 500
+    },
+    "request": {
+      "body": {
+        "username": "7417210626",
+        "password": "DeepakMS394@"
+      },
+      "query": {},
+      "params": {}
+    }
+  },
+  {
+    "errorId": "6744684726",
+    "timestamp": "2026-06-12 16:12:47",
+    "ip": "::1",
+    "method": "POST",
+    "url": "/sfMin/sfMinInward",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "error": {
+      "name": "SequelizeDatabaseError",
+      "message": "Lock wait timeout exceeded; try restarting transaction",
+      "stack": "Error    at Query.run (D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)    at D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\node_modules\\sequelize\\lib\\sequelize.js:315:28    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)    at async exports.genTransaction (D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\helper\\helper.js:668:16)    at async D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\routes\\INVENTORY\\store\\sf_rm_inward.js:201:23",
+      "code": null,
+      "status": 500
+    },
+    "request": {
+      "body": {
+        "trans_id": "IGA08/26-27/0352",
+        "components": [
+          "2026426142436620"
+        ],
+        "part": [
+          "PL401008A"
+        ],
+        "name": [
+          "Master Carton Sticker ( Chromo paper) Plug-3"
+        ],
+        "rate": [
+          "0.6"
+        ],
+        "qty": [
+          "1200"
+        ],
+        "remark": [
+          "Replacement received from vendor"
+        ],
+        "costCenter": "20242414254446",
+        "projectId": [
+          "PORT-2026050068"
+        ],
+        "location": [
+          "1765454243100"
+        ]
+      },
+      "query": {},
+      "params": {}
+    }
+  },
+  {
+    "errorId": "1287270316",
+    "timestamp": "2026-06-12 16:14:34",
+    "ip": "::1",
+    "method": "POST",
+    "url": "/sfMin/sfMinInward",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "error": {
+      "name": "SequelizeDatabaseError",
+      "message": "Lock wait timeout exceeded; try restarting transaction",
+      "stack": "Error    at Query.run (D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)    at D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\node_modules\\sequelize\\lib\\sequelize.js:315:28    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)    at async exports.genTransaction (D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\helper\\helper.js:668:16)    at async D:\\PROJECT - LIVE\\Alwar\\Alwar-backend\\routes\\INVENTORY\\store\\sf_rm_inward.js:201:23",
+      "code": null,
+      "status": 500
+    },
+    "request": {
+      "body": {
+        "trans_id": "IGA08/26-27/0352",
+        "components": [
+          "2026426142436620"
+        ],
+        "part": [
+          "PL401008A"
+        ],
+        "name": [
+          "Master Carton Sticker ( Chromo paper) Plug-3"
+        ],
+        "rate": [
+          "0.6"
+        ],
+        "qty": [
+          "1200"
+        ],
+        "remark": [
+          "Replacement received from vendor"
+        ],
+        "costCenter": "20242414254446",
+        "projectId": [
+          "PORT-2026050068"
+        ],
+        "location": [
+          "1765454243100"
+        ]
+      },
+      "query": {},
+      "params": {}
+    }
+  }
+]

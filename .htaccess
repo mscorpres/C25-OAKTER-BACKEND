@@ -1,0 +1,10 @@
+Options -Indexes
+
+# Block restricted file types, except when inside /files/
+RewriteEngine On
+
+# Allow all requests inside /files
+RewriteRule ^files/ - [L]
+
+# Block backend sensitive files anywhere else
+RewriteRule \.(js|json|env|config|log|lock)$ - [F]

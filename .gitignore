@@ -1,0 +1,21 @@
+# Ignore all .pdf and .xlsx files
+*.pdf
+*.xlsx
+
+# Ignore specific directories
+files/
+uploads/
+tmp/
+node_modules/
+
+# Ignore log files
+*.log
+access.log
+
+# Ignore readme.md (case-insensitive)
+readme.md
+
+# Ignore all environment files
+*.env
+helper/backupDrive.json
+helper/token.json
