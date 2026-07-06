@@ -2274,8 +2274,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
       const qty = helper.number(req.body.qty[i]);
       if (!qty || qty <= 0) {
         errors.push({
-          success: false,
-          status: "error",
           message: `Quantity should not be less than or equal to zero at row ${i + 1
             }`,
         });
@@ -2284,8 +2282,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
 
       if (!req.body.tolocation[i]) {
         errors.push({
-          success: false,
-          status: "error",
           message: `Invalid drop location at row ${i + 1}`,
         });
         continue;
@@ -2347,8 +2343,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
         );
         if (stmt2.length === 0) {
           errors.push({
-            success: false,
-            status: "error",
             message: `Invalid pick location at row ${i + 1}`,
           });
           continue;
@@ -2363,8 +2357,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
         );
         if (stmt3.length === 0) {
           errors.push({
-            success: false,
-            status: "error",
             message: `Invalid drop location at row ${i + 1}`,
           });
           continue;
@@ -2379,8 +2371,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
         );
         if (stmt4.length === 0) {
           errors.push({
-            success: false,
-            status: "error",
             message: `Invalid component at row ${i + 1}`,
           });
           continue;
@@ -2388,8 +2378,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
 
         if (stmt4[0].c_is_enabled === "N") {
           errors.push({
-            success: false,
-            status: "error",
             message: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
               }) is disabled for transaction at row ${i + 1}`,
           });
@@ -2398,8 +2386,6 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
 
         if (stmt4[0].c_type === "S") {
           errors.push({
-            success: false,
-            status: "error",
             message: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
               }) is a service part at row ${i + 1}`,
           });
@@ -2437,7 +2423,7 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
         // Validate available quantity
         if (inwardAllQty - outwardAllQty < qty) {
           errors.push({
-            msg: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
+            message: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
               }) has insufficient quantity [${inwardAllQty - outwardAllQty
               }] at location for row ${i + 1}`,
           });
@@ -2445,17 +2431,16 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
         }
       } else {
         errors.push({
-          success: false,
-          status: "error",
           message: `Failed to insert component at row ${i + 1}`,
         });
       }
     }
 
+
     // Check if there were any errors
     if (errors.length > 0) {
       await t.rollback();
-      return res.json({ success: false, status: "error", message: errors });
+      return res.json({ success: false, status: "error", message: errors[0].message, });
     }
 
     await t.commit();
@@ -3319,7 +3304,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
     // Check if there were any errors
     if (errors.length > 0) {
       await t.rollback();
-      return res.json({ status: "error", success: false, message: errors });
+      return res.json({ status: "error", success: false, message: errors[0].msg });
     }
 
     await t.commit();
@@ -3329,7 +3314,8 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
       message: `Godown migration from SF to REJ completed successfully. Transaction ID: #${transactionID}`,
     });
   } catch (err) {
-    return helper.errorResponse(res, err);
+    await t.rollback();
+    return res.json({ status: "error", success: false, message: "Something went wrong ! Contact the system administrator" });
   }
 });
 

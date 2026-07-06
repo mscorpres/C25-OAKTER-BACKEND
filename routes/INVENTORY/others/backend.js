@@ -596,7 +596,7 @@ router.post("/misDepartment", [auth.isAuthorized], async (req, res) => {
 //   }
 // );
 
-router.post("/getComponentByNameAndNo", [auth.isAuthorized], async (req, res) => {
+router.post("/getComponentByNameAndNo",  async (req, res) => {
   try {
     const validation = new Validator(req.body, {
       search: "required",
@@ -660,6 +660,7 @@ router.post("/getComponentByNameAndNo", [auth.isAuthorized], async (req, res) =>
       data: finalData,
     });
   } catch (err) {
+    console.log(err)
     return helper.errorResponse(res, err);
   }
 });

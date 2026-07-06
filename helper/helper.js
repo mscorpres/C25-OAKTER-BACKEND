@@ -652,9 +652,10 @@ exports.errorResponse = function (res, error) {
     console.error("Failed to write error log:", fileErr);
   }
 
-  return res.status(500).json({
+  return res.json({
     type: "INTERNAL_ERROR",
     success: false,
+    status: "error",
     message:
       "An unexpected error occurred, our technician will resolve this shortly.",
     report: {

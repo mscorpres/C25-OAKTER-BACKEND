@@ -555,7 +555,7 @@ router.post("/print_vbt_report", [auth.isAuthorized], async (req, res) => {
       await htmlToPdf
         .generatePdf(file, options)
         .then((pdfBuffer) => {
-          res.json({ buffer: pdfBuffer });
+          res.json({status: "success", success: true,  message: "File Generated successfully..", data: {buffer: pdfBuffer} });
         })
         .catch((err) => {
           return res.json({ message: "an error while generating file", status: "error", success: false});
@@ -564,7 +564,7 @@ router.post("/print_vbt_report", [auth.isAuthorized], async (req, res) => {
       return res.json({ status: "error", success: false, message: "VBT Not found" });
     }
   } catch (err) {
-      return helper.errorResponse(res, err);
+      return res.json({ message: "an error while generating file", status: "error", success: false});
   }
 });
 
