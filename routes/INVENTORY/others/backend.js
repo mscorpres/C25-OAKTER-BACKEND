@@ -26,9 +26,10 @@ router.post("/vendorList", [auth.isAuthorized], (req, res) => {
 
   if (validation.fails()) {
     res.json({
+      status: "error",
       success: false,
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
     });
     return;
   }
@@ -115,7 +116,7 @@ router.post("/vendorAddress", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     res.json({
-      message: validation.errors.all(),
+      message: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -595,7 +596,7 @@ router.post("/misDepartment", [auth.isAuthorized], async (req, res) => {
 //   }
 // );
 
-router.post("/getComponentByNameAndNo", [auth.isAuthorized], async (req, res) => {
+router.post("/getComponentByNameAndNo",  async (req, res) => {
   try {
     const validation = new Validator(req.body, {
       search: "required",
@@ -659,6 +660,7 @@ router.post("/getComponentByNameAndNo", [auth.isAuthorized], async (req, res) =>
       data: finalData,
     });
   } catch (err) {
+    console.log(err)
     return helper.errorResponse(res, err);
   }
 });
@@ -732,7 +734,7 @@ router.post("/getProductUOM", [auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     return res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -774,10 +776,11 @@ router.post("/getFGRMByNameAndNo", [auth.isAuthorized], async (req, res) => {
   });
 
   if (validation.fails()) {
-    return res.status(500).json({
+    return res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       success: false,
+      status: "error",
     });
   }
 
@@ -824,10 +827,10 @@ router.post("/getProductByNameAndNo", [auth.isAuthorized], async (req, res) => {
   });
 
   if (validation.fails()) {
-    return res.status(500).json({
+    return res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
-      success: false,
+      data: validation.errors.errors[0],
+      success: false, status: "error",
     });
   }
 
@@ -877,10 +880,10 @@ router.post(
     });
 
     if (validation.fails()) {
-      return res.status(500).json({
+      return res.json({
         message: "Something you missing in form field to supply",
-        data: validation.errors.all(),
-        success: false,
+        data: validation.errors.errors[0],
+        success: false, status: "error",
       });
     }
 
@@ -1035,7 +1038,7 @@ router.post(
     if (validation.fails()) {
       return res.json({
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -1354,7 +1357,7 @@ router.post("/searchHsn", [auth.isAuthorized], async (req, res) => {
     return res.status(400).json({
       success: false,
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -1550,7 +1553,7 @@ router.post("/fetchHsnDb", [auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     return res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -1798,7 +1801,7 @@ router.post("/projectSave", [auth.isAuthorized], async (req, res) => {
     });
     if (validation.fails()) {
       return res.json({
-        message: validation.errors.all(),
+        message: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -1956,7 +1959,7 @@ router.post("/fetchProjectData", [auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     return res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -2118,7 +2121,7 @@ router.post("/stateList", [auth.isAuthorized], (req, res) => {
   if (validation.fails()) {
     res.json({
       message: "something you missing in form field to supply",
-      data: validation.errors.all(),
+      data: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -2355,7 +2358,7 @@ router.post("/updatePage", [auth.isAuthorized], async (req, res) => {
     if (validation.fails()) {
       return res.json({
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -2421,7 +2424,7 @@ router.post("/jump_jumpModule", [auth.isAuthorized], (req, res) => {
 
   if (validation.fails()) {
     res.json({
-      message: validation.errors.all(),
+      message: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -2557,7 +2560,7 @@ router.post("/submitBug", [auth.isAuthorized], async (req, res) => {
 
     if (validation.fails()) {
       return res.json({
-        message: validation.errors.all(),
+        message: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -2579,7 +2582,7 @@ router.post("/submitBug", [auth.isAuthorized], async (req, res) => {
 // 		});
 
 // 		if (validation.fails()) {
-// 			res.json({ message: "something you missing in form field to supply", data: validation.errors.all(), status: "error", success: false });
+// 			res.json({ message: "something you missing in form field to supply", data: validation.errors.errors[0], status: "error", success: false });
 // 		}
 
 // 		let stmt = await otherDB.query("SELECT * FROM `user_fav_page` WHERE `user_id` = :user_id AND `page_id` = :page_id", {
@@ -2650,7 +2653,7 @@ router.post("/favouritePages", [auth.isAuthorized], async (req, res) => {
       return res.json({
         status: "error",
         success: false,
-        message: validation.errors.all(),
+        message: validation.errors.errors[0],
       });
     }
 
@@ -2726,7 +2729,7 @@ router.post("/removeFavouritePages", [auth.isAuthorized], async (req, res) => {
     if (validation.fails()) {
       res.json({
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -2869,7 +2872,7 @@ router.post("/jw_sf_inward_location", [auth.isAuthorized], async (req, res) => {
 //     return res.json({
 //       success: false,
 //       status: "error",
-//       message: validation.errors.all(),
+//       message: validation.errors.errors[0],
 //     });
 //   }
 
@@ -2935,7 +2938,7 @@ router.get("/jw/warehouse/location", [auth.isAuthorized], async (req, res) => {
     return res.json({
       success: false,
       status: "error",
-      message: validation.errors.all(),
+      message: validation.errors.errors[0],
     });
   }
 
@@ -3163,7 +3166,7 @@ router.post("/checkInvoice", [auth.isAuthorized], async (req, res) => {
       return res.status(403).json({
         status: "error",
         success: false,
-        message: validation.errors.all(),
+        message: validation.errors.errors[0],
       });
     }
 
@@ -3223,7 +3226,7 @@ router.post("/documents", [auth.isAuthorized], async (req, res) => {
       success: false,
       status: "error",
       message: "something you missing in form field to supply",
-      errors: validation.errors.all(),
+      errors: validation.errors.errors[0],
     });
   }
 
@@ -3268,7 +3271,7 @@ router.post("/fetchallsfgForProduct", [auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     return res.json({
       message: "something you missing in the form field to supply",
-      errors: validation.errors.all(),
+      errors: validation.errors.errors[0],
       status: "error",
       success: false,
     });
@@ -3417,7 +3420,7 @@ router.post("/fetchClientDetail", [auth.isAuthorized], async (req, res) => {
     if (validation.fails()) {
       return res.json({
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -3480,7 +3483,7 @@ router.post("/fetchClientAddress", [auth.isAuthorized], async (req, res) => {
     if (validation.fails()) {
       return res.json({
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
         status: "error",
         success: false,
       });
@@ -3658,7 +3661,7 @@ router.post("/WOcompStockLoc", [auth.isAuthorized], async (req, res) => {
         status: "error",
         success: false,
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
       });
     }
 
@@ -3756,7 +3759,7 @@ router.post("/WOproductStockLoc", [auth.isAuthorized], async (req, res) => {
         status: "error",
         success: false,
         message: "something you missing in form field to supply",
-        data: validation.errors.all(),
+        data: validation.errors.errors[0],
       });
     }
 

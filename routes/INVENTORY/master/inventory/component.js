@@ -1071,6 +1071,7 @@ router.post("/updateComponent/:type", [auth.isAuthorized], async (req, res) => {
         await t2.rollback();
         return res.json({
           success: false,
+          status: "error",
           message: `Assigning uID is already mapped with partcode [${component[0].c_part_no}] with uID ${component[0].attribute_code}`,
         });
       } else {
@@ -1211,7 +1212,11 @@ router.post("/updateComponent/:type", [auth.isAuthorized], async (req, res) => {
     console.log(err)
     if (t1) await t1.rollback();
     if (t2) await t2.rollback();
-    return helper.errorResponse(res, err);
+    return res.json({
+      success: false,
+      message: "Something went wrong ! Contact the system administrator",
+      status: "error",
+    })
   }
 });
 
