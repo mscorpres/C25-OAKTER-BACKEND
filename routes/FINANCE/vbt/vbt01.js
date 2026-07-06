@@ -644,9 +644,9 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
       }
     }
 
-    return res.json({ status: "success", data: final_data , success: true });
+    return res.json({ status: "success", data: final_data, message: "Data fetched successfully", success: true });
   } catch (error) {
-    return helper.errorResponse(res, error);
+    return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 });
 
@@ -1579,7 +1579,12 @@ router.get("/vbt01_gl_options", [auth.isAuthorized], async (req, res) => {
             }
           }
         }
-        return res.json(options);
+        return res.json({
+          status: "success",
+          success: true,
+          message: "G/L Found Successfully",
+          data: options,
+        });
       }
     } else {
       return res.json({
@@ -1589,7 +1594,7 @@ router.get("/vbt01_gl_options", [auth.isAuthorized], async (req, res) => {
       });
     }
   } catch (err) {
-    return helper.errorResponse(res, err);
+    return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 });
 

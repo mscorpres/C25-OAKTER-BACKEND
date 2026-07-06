@@ -166,13 +166,13 @@ router.post("/fetch_freight_group", [auth.isAuthorized], async (req, res) => {
             }
           }
         }
-        return res.json(options);
+        return res.json({ status: "success", success: true, message: "Freight Found Successfully", data: options });
       }
     } else {
       return res.json({ status: "error", success: false, message: "No G/L Mapping Found!!" });
     }
   } catch (err) {
-      return helper.errorResponse(res, err);
+      return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 });
 
@@ -227,13 +227,13 @@ router.get("/fetch_gst_ledger", [auth.isAuthorized], async (req, res) => {
             }
           }
         }
-        return res.json(options);
+        return res.json({ status: "success", success: true, message: "GST Found Successfully", data: options });
       }
     } else {
       return res.json({ status: "error", success: false, message: "No G/L Mapping Found!!" });
     }
   } catch (err) {
-      return helper.errorResponse(res, err);
+       return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 });
 
@@ -244,7 +244,12 @@ router.get('/checkInvoice', async (req, res) => {
     vendor: 'required',
   });
   if (validation.fails()) {
-    return res.status(403).send(Object.values(validation.errors.all())[0].join());
+    return res.json({
+      message: 'something you missing in form field to supply',
+      data: validation.errors.all(),
+      status: 'error',
+      success: false
+    })
   }
   try {
     let findExistingInvoice = await tallyDB.query("SELECT * FROM `tally_vbt` WHERE vbt_invoice_no= :vbtInvoiceNo AND ven_code = :vendor", {
@@ -255,18 +260,22 @@ router.get('/checkInvoice', async (req, res) => {
       },
     });
     if (findExistingInvoice.length > 0) {
-      return res.status(200).send({
-        message: 'vbt has been already generated for this invoice no',
-        checkInvoice: true
-      });
+     return res.json({
+      success: false,
+      status: 'error',
+       message: 'invoice number already exist',
+       checkInvoice: true
+     })
     } else {
-      return res.status(200).send({
-        message: 'no vbt has been made for this invoice no',
+      return res.json({
+        success: true,
+        status: 'success',
+        message: 'invoice number not exist',
         checkInvoice: false
-      });
+      })
     }
   } catch (error) {
-      return helper.errorResponse(res, error);
+      return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 })
 
@@ -675,11 +684,11 @@ router.get("/getData", [auth.isAuthorized], async (req, res) => {
         })
       }
 
-      return res.status(200).send(result);
+      return res.json({ status: "success", success: true, message: "Data fetched successfully", data: result });
     }
     return res.json({ status: "error", success: false, message: "No data found" });
   } catch (error) {
-      return helper.errorResponse(res, error);
+      return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 })
 
@@ -692,7 +701,7 @@ router.post("/lastOptions", [auth.isAuthorized], async (req, res) => {
     });
 
     if (validation.fails()) {
-      return res.status(403).send(Object.values(validation.errors.all())[0].join());
+      return res.json({ status: "error", success: false, message: validation.errors.all() });
     }
 
     let result = [];
@@ -713,7 +722,7 @@ router.post("/lastOptions", [auth.isAuthorized], async (req, res) => {
       });
 
       if (fetchVbt.length <= 0) {
-        return res.json(null);
+        return res.json({ status: "error", success: false, message: "No data found" });
       }
 
       result.push({
@@ -724,10 +733,10 @@ router.post("/lastOptions", [auth.isAuthorized], async (req, res) => {
       })
     }
 
-    return res.json(result);
+    return res.json({ status: "success", success: true, message: "Data fetched successfully", data: result });
 
   } catch (error) {
-      return helper.errorResponse(res, error);
+      return res.json({ status: "error", success: false, message: "an error occurred while process your request" });
   }
 })
 
