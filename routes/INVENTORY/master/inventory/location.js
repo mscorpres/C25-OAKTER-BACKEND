@@ -160,6 +160,7 @@ router.post("/fetchLocationBranch", async (req, res) => {
 router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
   const validation = new Validator(req.body, {
     location_name: "required",
+    location_heading: "required",
     location_address: "required",
     location_under: "required",
     location_type: "required",
@@ -199,7 +200,7 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
   try {
     var new_key = new Date().getTime();
     const result = await invtDB.query(
-      "INSERT INTO location_main (`company_branch`,`loc_name` , `parents_id`, `loc_type`, `loc_for`, `loc_address`, `location_key`, `insert_date`, `inserted_by`, `assigned_to`) VALUES (:branch, :loc_name , :parent_id , :loc_type , :loc_for, :loc_address , :location_key , :insert_date , :inserted_by, :assigned_to)",
+      "INSERT INTO location_main (`company_branch`,`loc_name` , `parents_id`, `loc_type`, `loc_for`, `loc_address`, `location_key`, `insert_date`, `inserted_by`, `assigned_to`, `location_heading`) VALUES (:branch, :loc_name , :parent_id , :loc_type , :loc_for, :loc_address , :location_key , :insert_date , :inserted_by, :assigned_to, :location_heading)",
       {
         replacements: {
           branch: req.branch,
@@ -212,6 +213,7 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
           insert_date: moment().format("YYYY-MM-DD HH:mm:ss"),
           inserted_by: req.logedINUser,
           assigned_to: req.body.mapping_user,
+          location_heading: req.body.location_heading,
         },
         type: invtDB.QueryTypes.INSERT,
       }
