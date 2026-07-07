@@ -12,52 +12,40 @@ async function getBomPendingWithJobwork(jwID, locIn, locOut, component) {
   const [row] = await invtDB.query(
     `
     SELECT
-      /* TOTAL ISSUE QTY (JOBWORK) */
-      COALESCE(SUM(
-        CASE
-          WHEN trans_type = 'JOBWORK'
-           AND jw_transaction_id = :jwID
-           AND components_id = :component
-           AND loc_in = :locOut
-          THEN qty + other_qty
-          ELSE 0
-        END
-      ), 0) AS total_issue_qty,
-
-      /* TOTAL RM RETURN QTY */
-      COALESCE(SUM(
-        CASE
-          WHEN trans_type IN( 'TRANSFER', 'SFG-CONSUMPTION', 'CONSUMPTION' )
-           AND jw_transaction_id = :jwID
-           AND components_id = :component
-           AND trans_mode IN ('return', 'default')
-           AND loc_out = :locOut
-          THEN qty + other_qty
-          ELSE 0
-        END
-      ), 0) AS total_rm_return_qty
+      COALESCE(SUM(CASE WHEN trans_type = 'JOBWORK' AND jw_transaction_id = :jwID AND components_id = :component THEN qty + other_qty ELSE 0 END), 0) AS total_issue_qty,
+      COALESCE(SUM(CASE WHEN trans_type = 'TRANSFER' AND in_jw_transaction_id = :jwID AND components_id = :component AND trans_mode = 'return' THEN qty + other_qty ELSE 0 END), 0) AS total_rm_return_qty,
+      COALESCE(SUM(CASE WHEN trans_type = 'SFG-CONSUMPTION' AND jw_transaction_id = :jwID AND components_id = :component AND trans_mode = 'default' THEN qty + other_qty ELSE 0 END), 0) AS total_sfg_consump,
+      COALESCE(SUM(CASE WHEN trans_type = 'CONSUMPTION' AND jw_transaction_id = :jwID AND components_id = :component AND trans_mode = 'default' THEN qty + other_qty ELSE 0 END), 0) AS total_consumption
     FROM rm_location
     `,
     {
-      replacements: {
-        jwID,
-        component,
-        locIn,
-        locOut,
-      },
+      replacements: { jwID, component },
       type: invtDB.QueryTypes.SELECT,
     }
   );
 
-  const total_issue_qty = row?.total_issue_qty || 0;
-  const total_rm_return_qty = row?.total_rm_return_qty || 0;
+  const total_issue_qty = Number(row?.total_issue_qty || 0);
+  const total_rm_return_qty = Number(row?.total_rm_return_qty || 0);
+  const total_sfg_consump = Number(row?.total_sfg_consump || 0);
+  const total_consumption = Number(row?.total_consumption || 0);
+
+  const consump_qty = helper.number(
+    total_consumption > total_issue_qty - total_rm_return_qty
+      ? total_issue_qty - total_rm_return_qty
+      : total_consumption
+  );
+  const available = helper.number(
+    total_issue_qty - (total_sfg_consump + total_rm_return_qty + consump_qty)
+  );
 
   return {
     total_issue_qty,
     total_rm_return_qty,
+    total_sfg_consump,
+    total_consumption,
+    available,
   };
 }
-
 exports.savejwsfinward = async (req, res) => {
   const transaction = await invtDB.transaction();
   try {
@@ -69,6 +57,7 @@ exports.savejwsfinward = async (req, res) => {
       invoice: "required",
       drop_location: "required",
       ewaybill: "required",
+       challan_date: "required",
     });
 
     if (validation.fails()) {
@@ -77,6 +66,7 @@ exports.savejwsfinward = async (req, res) => {
         success: false,
         message: helper.firstErrorValidatorjs(validation),
         status: "error",
+        data: null,
       });
     }
 
@@ -84,8 +74,10 @@ exports.savejwsfinward = async (req, res) => {
       await transaction.rollback();
       return res.json({
         success: false,
+        code: 200,
         message: "Quantity should be greater than 0",
         status: "error",
+        data: null,
       });
     }
 
@@ -100,6 +92,7 @@ exports.savejwsfinward = async (req, res) => {
       jobwork_trans_id,
       consCompcomponents,
       consQty,
+      consRate,
       consRemark,
       vendortype,
       vendor,
@@ -168,6 +161,7 @@ exports.savejwsfinward = async (req, res) => {
                     message:
                       "JW PO is on hold. Contact authorized person to reopen.",
                     status: "error",
+                    data: null,
                   });
                 } else if (
                   helper.number(stmt_check_jw[0].jw_po_issue_qty) +
@@ -179,6 +173,7 @@ exports.savejwsfinward = async (req, res) => {
                     success: false,
                     message: `Quantity exceeds PO order: ${stmt_check_jw[0].jw_po_issue_qty} + ${qty} > ${stmt_check_jw[0].jw_po_order_qty}`,
                     status: "error",
+                    data: null,
                   });
                 } else {
                   let stmt_min_no = await invtDB.query(
@@ -236,6 +231,7 @@ exports.savejwsfinward = async (req, res) => {
                         success: false,
                         message: `Transaction ID ${in_txn_no} already exists. Contact system administrator.`,
                         status: "error",
+                        data: null,
                       });
                     } else {
                       // CHANGED: Insert file references in database (files already in S3 from upload-invoice API)
@@ -274,15 +270,17 @@ exports.savejwsfinward = async (req, res) => {
                         await transaction.rollback();
                         return res.json({
                           success: false,
+                          data: null,
                           status: "error",
-                            message: "Vendor not found",
+                          message: "Vendor not found",
                         });
                       }
 
                       let stmt_insert = await invtDB.query(
-                        "INSERT INTO `rm_location` (`in_module`,`min_ewaybill`,`currency_type`,`company_branch`,`vendor_type`,`components_id`,`in_po_rate`,`qty`,`loc_in`,`any_remark`,`insert_date`,`insert_by`,`in_transaction_id`,`in_jw_transaction_id`,`in_invoice_id`,`trans_type`,`in_vendor_name`, eInv_applicability, ackwlg_irn, qr_status) VALUES ('IN-JWI',:ewaybill,'364907247',:branch,:vendor_type,:component,:jw_rate,:qty,:location_in,:remark,:insertdate,:insertby,:in_transaction_id,:jw_transaction_id,:jw_invoice_id,'INWARD',:vendor_name, :einv_applicability, :ackwlg_irn, :qr_status)",
+                        "INSERT INTO `rm_location` (`txn_session`,`in_module`,`inward_type`,`min_ewaybill`,`currency_type`,`company_branch`,`vendor_type`,`components_id`,`in_po_rate`,`qty`,`loc_in`,`any_remark`,`insert_date`,`insert_by`,`in_transaction_id`,`in_jw_transaction_id`,`in_invoice_id`,`trans_type`,`in_vendor_name`, eInv_applicability, ackwlg_irn, qr_status,challan_date) VALUES (:txn_session,'IN-JWI','SFG-INWARD',:ewaybill,'364907247',:branch,:vendor_type,:component,:jw_rate,:qty,:location_in,:remark,:insertdate,:insertby,:in_transaction_id,:jw_transaction_id,:jw_invoice_id,'INWARD',:vendor_name, :einv_applicability, :ackwlg_irn, :qr_status,:challan_date)",
                         {
                           replacements: {
+                            txn_session: helper.generateTxnSession(),
                             ewaybill:
                               req.body.ewaybill == ""
                                 ? "--"
@@ -309,6 +307,7 @@ exports.savejwsfinward = async (req, res) => {
                               checkVendor[0].ven_einvoice_status,
                             ackwlg_irn: req.body.irn ?? "--",
                             qr_status: req.body.qrScan ?? "--",
+                            challan_date: req.body.challan_date
                           },
                           type: invtDB.QueryTypes.INSERT,
                           transaction: transaction,
@@ -344,6 +343,8 @@ exports.savejwsfinward = async (req, res) => {
                               await transaction.rollback();
                               return res.json({
                                 success: false,
+                                 code: 200,
+                                 data: null,
                                 status: "error",
                                 message:
                                   "Consumption components and quantity mismatch",
@@ -370,7 +371,9 @@ exports.savejwsfinward = async (req, res) => {
                                 await transaction.rollback();
                                 return res.json({
                                   success: false,
+                                  code: 200,
                                   status: "error",
+                                  data: null,
                                   message:
                                     helper.firstErrorValidatorjs(
                                       validConsumption
@@ -402,7 +405,9 @@ exports.savejwsfinward = async (req, res) => {
                                 await transaction.rollback();
                                 return res.json({
                                   success: false,
+                                  code: 200,
                                   status: "error",
+                                  data: null,
                                   message: `Component not found in BOM at row ${
                                     i + 1
                                   }`,
@@ -410,7 +415,7 @@ exports.savejwsfinward = async (req, res) => {
                               }
 
                               
-                              const  { total_issue_qty, total_rm_return_qty }  =
+                              const  {available }  =
                                 await getBomPendingWithJobwork(
                                   jobwork_trans_id,
                                   stmt_check_jw[0].ven_location,
@@ -419,17 +424,18 @@ exports.savejwsfinward = async (req, res) => {
                                 );
 
                               if (
-                                consumeQty > helper.number(total_issue_qty - total_rm_return_qty)
+                                consumeQty > available
                               ) {
                                 await transaction.rollback();
                                 return res.json({
+                                  code: 200,
                                   success: false,
                                   message: `Insufficient jobwork stock for component [${componentKey}] at row ${
                                     i + 1
-                                  } | Availble Qty is: ${total_issue_qty - total_rm_return_qty}`,
+                                  } | Available Qty is: ${available}`,
                                   data: {
                                     required: consumeQty,
-                                    available: total_issue_qty - total_rm_return_qty,
+                                    available,
                                   },
                                 });
                               }
@@ -441,9 +447,10 @@ exports.savejwsfinward = async (req, res) => {
                               );
 
                               const consCompStmt = await invtDB.query(
-                                "INSERT INTO rm_location (in_transaction_id, company_branch, trans_type, components_id, qty, mfg_bom_qty, out_transaction_id, jw_transaction_id, insert_date, insert_by, any_remark, in_invoice_id, loc_out) VALUES (:in_transaction_id, :branch, :trans_type, :components_id, :qty, :mfg_bom_qty, :out_transaction_id, :jw_transaction_id, :insert_date, :insert_by, :any_remark, :jw_invoice_id, :loc_out)",
+                                "INSERT INTO rm_location (txn_session,in_transaction_id, company_branch, trans_type, components_id, qty, mfg_bom_qty, out_transaction_id, jw_transaction_id, insert_date, insert_by, any_remark, in_invoice_id, loc_out,in_po_rate) VALUES (:txn_session,:in_transaction_id, :branch, :trans_type, :components_id, :qty, :mfg_bom_qty, :out_transaction_id, :jw_transaction_id, :insert_date, :insert_by, :any_remark, :jw_invoice_id, :loc_out,:consumpt_rate)",
                                 {
                                   replacements: {
+                                    txn_session: helper.generateTxnSession(),
                                     branch: req.branch,
                                     trans_type: "SFG-CONSUMPTION",
                                     components_id: componentKey,
@@ -462,6 +469,7 @@ exports.savejwsfinward = async (req, res) => {
                                     in_transaction_id: in_txn_no,
                                     jw_invoice_id: invoice,
                                     loc_out: stmt_check_jw[0].ven_location,
+                                    consumpt_rate: consRate[i] ,
                                   },
                                   type: invtDB.QueryTypes.INSERT,
                                   transaction: transaction,
@@ -471,9 +479,11 @@ exports.savejwsfinward = async (req, res) => {
                               if (consCompStmt.length <= 0) {
                                 await transaction.rollback();
                                 return res.json({
+                                  code: 200,
                                   status: "error",
                                   success: false,
                                   message: "Error saving consumption data",
+                                  data: null,
                                 });
                               }
                             }
@@ -731,6 +741,7 @@ exports.savejwsfinward = async (req, res) => {
 
                             return res.json({
                               status: "success",
+                              code: 200,
                               success: true,
                               message: `FG/SFG inward request added successfully with transaction id [${in_txn_no}]`,
                               data: {
@@ -745,8 +756,10 @@ exports.savejwsfinward = async (req, res) => {
                             await transaction.rollback();
                             return res.json({
                               success: false,
+                              code: 200,
                               status: "error",
                               message: "Transaction route is busy. Try again.",
+                              data: null,
                             });
                           }
                         } else {
@@ -755,12 +768,16 @@ exports.savejwsfinward = async (req, res) => {
                             success: false,
                             status: "error",
                             message: "Error updating purchase request",
+                            data: null,
+                            code: 200,
                           });
                         }
                       } else {
                         await transaction.rollback();
                         return res.json({
                           success: false,
+                          code: 200,
+                          data: null,
                           status: "error",
                           message: "Error saving location data",
                         });
@@ -771,6 +788,8 @@ exports.savejwsfinward = async (req, res) => {
                     return res.json({
                       success: false,
                       status: "error",
+                      code: 200,
+                      data: null,
                       message: "Error updating transaction number",
                     });
                   }
@@ -781,6 +800,8 @@ exports.savejwsfinward = async (req, res) => {
                   success: false,
                   status: "error",
                   message: "Invalid location provided",
+                  code: 200,
+                  data: null,
                 });
               }
             } else {
@@ -789,6 +810,8 @@ exports.savejwsfinward = async (req, res) => {
                 success: false,
                 status: "error",
                 message: "Invalid component code",
+                code: 200,
+                data: null,
               });
             }
           } else {
@@ -797,12 +820,16 @@ exports.savejwsfinward = async (req, res) => {
               success: false,
               status: "error",
               message: "No SFG inwarding RM mapped",
+              code: 200,
+              data: null,
             });
           }
         } else {
           await transaction.rollback();
           return res.json({
             success: false,
+             code: 200,
+             data: null,
             status: "error",
             message: "BOM recipe deleted",
           });
@@ -812,6 +839,8 @@ exports.savejwsfinward = async (req, res) => {
         return res.json({
           success: false,
           status: "error",
+           code: 200, 
+           data: null,
           message: "Jobwork transaction not found",
         });
       }
@@ -820,12 +849,20 @@ exports.savejwsfinward = async (req, res) => {
       return res.json({
         success: false,
         status: "error",
+         code: 200,
+         data: null,
         message: "Jobwork product SKU not matched",
       });
     }
   } catch (err) {
     console.log(err);
     await transaction.rollback();
-    return helper.errorResponse(res, err);
+    return res.json({
+      code: 200,
+      success: false,
+      message: "Internal Error!!! If this condition persists, contact your system administrator",
+      error: err.message,
+      data: null,
+    });
   }
 };

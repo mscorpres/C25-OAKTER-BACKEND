@@ -267,7 +267,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     const fileName = "r37.xlsx";
     XLSX.writeFile(wb, "./files/excel/" + fileName);
 
-    return res.json({ success: true, data: result, status: "success" });
+    return res.json({ success: true, data: result,code: 200, status: "success" });
   } catch (error) {
     console.log(error);
     return helper.errorResponse(res, error);

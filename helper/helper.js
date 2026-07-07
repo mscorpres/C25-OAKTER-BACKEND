@@ -944,3 +944,23 @@ exports.dateFormat = function (date, currentFormat, newFormat) {
   return moment(date, currentFormat).format(newFormat);
 };
 // Date Formatting --- END
+
+
+exports.generateTxnSession = function () {
+  const d = new Date();
+
+  const month = d.getMonth();
+  let startYear;
+
+  if (month >= 3) {
+    // April to December
+    startYear = d.getFullYear();
+  } else {
+    // Jan to March
+    startYear = d.getFullYear() - 1;
+  }
+
+  const endYear = startYear + 1;
+
+  return `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`;
+}

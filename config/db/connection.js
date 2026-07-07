@@ -80,6 +80,27 @@ if (process.env.STAGE == "PROD") {
     pool: poolOption, timezone: "+05:30"
   });
 
+    invtC25 = new Sequelize(
+    process.env.DB_C25_INVT_DBNAME,
+    process.env.DB_USER,
+    process.env.DB_PASS,
+    commonConfig,
+  );
+
+  otherC25 = new Sequelize(
+    process.env.DB_C25_OTHER_DBNAME,
+    process.env.DB_USER,
+    process.env.DB_PASS,
+    commonConfig,
+  );
+
+  tallyC25 = new Sequelize(
+    process.env.DB_C25_TALLY_DBNAME,
+    process.env.DB_INVT_USER,
+    process.env.DB_PASS,
+    commonConfig,
+  );
+
 } else {
   // DEV/TEST mode - use TEST credentials for dev DBs
   // PRIMARY: c25 (Oakter) test databases, same as PROD above.
@@ -129,6 +150,46 @@ if (process.env.STAGE == "PROD") {
     dialectOptions: options,
     pool: poolOption, timezone: "+05:30"
   });
+
+    invtC25 = new Sequelize(
+    process.env.TEST_DB_C25_INVT_DBNAME,
+    devUser,
+    devPass,
+    {
+      host: devHost,
+      dialect: "mysql",
+      dialectOptions: options,
+      pool: poolOption,
+      timezone: "+05:30",
+    },
+  );
+
+  otherC25 = new Sequelize(
+    process.env.TEST_DB_C25_OTHER_DBNAME,
+    devUser,
+    devPass,
+    {
+      host: devHost,
+      dialect: "mysql",
+      dialectOptions: options,
+      pool: poolOption,
+      timezone: "+05:30",
+    },
+  );
+
+  tallyC25 = new Sequelize(
+    process.env.TEST_DB_C25_TALLY_DBNAME,
+    devUser,
+    devPass,
+    {
+      host: devHost,
+      dialect: "mysql",
+      dialectOptions: options,
+      pool: poolOption,
+      timezone: "+05:30",
+    },
+  );
+
 }
  
  
@@ -141,9 +202,12 @@ if (process.env.STAGE == "PROD") {
     testConnection(tally, "Tally"),
     testConnection(invtOakter, "Inventory (Oakter)"),
     testConnection(otherOakter, "Other (Oakter)"),
-    testConnection(tallyOakter, "Tally (Oakter)")
+    testConnection(tallyOakter, "Tally (Oakter)"),
+    testConnection(invtC25, "Inventory (C25)"),
+    testConnection(otherC25, "Other (C25)"),
+    testConnection(tallyC25, "Tally (C25)"),
   ]);
   console.warn("=====CONNECTION CHECK COMPLETED======");
 })();
  
-module.exports = { tallyDB: tally, otherDB: other, invtDB: invt, invtOakterDB: invtOakter, otherOakterDB: otherOakter, tallyOakterDB: tallyOakter };
+module.exports = { tallyDB: tally, otherDB: other, invtDB: invt, invtOakterDB: invtOakter, otherOakterDB: otherOakter, tallyOakterDB: tallyOakter,   invtC25DB: invtC25, otherC25DB: otherC25, tallyC25DB: tallyC25, };

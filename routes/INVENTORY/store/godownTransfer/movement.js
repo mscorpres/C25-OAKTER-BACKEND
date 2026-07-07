@@ -1165,7 +1165,7 @@ router.post("/godownStocks", [auth.isAuthorized], async (req, res) => {
     const outward_all_qty = stmt2.length ? helper.number(stmt2[0].Outward) : 0;
 
     return res.json({
-      success: false,
+      success: true,
       status: "success",
       data: {
         name: stmt3[0].c_name,
@@ -1914,6 +1914,7 @@ router.post("/transferRM2RM", [auth.isAuthorized], async (req, res) => {
     component: "required|array",
     tolocation: "required|array",
     qty: "required|array",
+    rate: "required|array",
   });
 
   if (validation.fails()) {
@@ -2027,7 +2028,7 @@ router.post("/transferRM2RM", [auth.isAuthorized], async (req, res) => {
             : "--";
 
         let stmt1 = await invtDB.query(
-          "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`)VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
+          "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`,in_po_rate)VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id,:rate)",
           {
             replacements: {
               branch: req.branch,
@@ -2039,6 +2040,7 @@ router.post("/transferRM2RM", [auth.isAuthorized], async (req, res) => {
               insert_date: insert_dt,
               insert_by: req.logedINUser,
               transfer_transaction_id: transactionID,
+              rate: req.body.rate[i],
             },
             type: invtDB.QueryTypes.INSERT,
             transaction: t,
@@ -2072,7 +2074,7 @@ router.post("/transferRM2RM", [auth.isAuthorized], async (req, res) => {
                 if (stmt4[0].c_is_enabled == "N") {
                   await t.rollback();
                   return res.json({
-                    code: 500,
+                    success: false,
                     status: "error",
                     message: {
                       msg:
@@ -2086,7 +2088,7 @@ router.post("/transferRM2RM", [auth.isAuthorized], async (req, res) => {
                 } else if (stmt4[0].c_type == "S") {
                   await t.rollback();
                   return res.json({
-                    code: 500,
+                    success: false,
                     status: "error",
                     message: {
                       msg:

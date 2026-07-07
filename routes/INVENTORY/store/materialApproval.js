@@ -265,6 +265,8 @@ router.post(
       authKey: "required",
       issueQty: "required|min:0",
       pickLocation: "required",
+      rate: "required",
+      remark: "required",
     });
 
     if (validation.fails()) {
@@ -398,9 +400,10 @@ router.post(
               transactionKey = date + "1";
             }
             let stmt4 = await invtDB.query(
-              "INSERT INTO `rm_location` (`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`any_remark`,`bom_subject_id`,`insert_date`,`insert_by`,`out_transaction_id`)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:subject,:indate,:inby,:out_transaction_id)",
+              "INSERT INTO `rm_location` (`txn_session`,`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`any_remark`,`bom_subject_id`,`insert_date`,`insert_by`,`out_transaction_id`,`req_reason`, in_po_rate)VALUES (:txn_session,:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:subject,:indate,:inby,:out_transaction_id, :reason, :in_po_rate)",
               {
                 replacements: {
+                  txn_session: helper.generateTxnSession(),
                   branch: req.branch,
                   type: "ISSUE",
                   component: req.body.component,
@@ -412,6 +415,8 @@ router.post(
                   indate: moment().format("YYYY-MM-DD HH:mm:ss"),
                   inby: req.logedINUser,
                   out_transaction_id: transactionKey,
+                  reason: req.body.remark,
+                  in_po_rate: req.body.rate,
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction: t,
@@ -488,6 +493,7 @@ router.post(
         return;
       }
     } catch (err) {
+      await t.rollback();
       return helper.errorResponse(res, err);
     }
   }

@@ -10,7 +10,7 @@ const permission = require("../../../middleware/permission");
 const Validator = require("validatorjs");
 
 // FETCH ALL PENDING FG
-router.post("/pending", [auth.isAuthorized], async (req, res) => {
+router.get("/pending", [auth.isAuthorized], async (req, res) => {
   try {
     let stmt0 = await invtDB.query(
       "SELECT `mfg_production_2`.`mfg_sku`, `mfg_production_2`.`mfg_ref_id`, `mfg_production_2`.`mfg_transaction`, `mfg_production_2`.`mfg_prod_type`, `mfg_production_2`.mfg_prod_planing_qty, `products`.`p_sku`, `products`.`p_name`, COALESCE( SUM( `mfg_production_2`.`mfg_prod_planing_qty` ), 0 ) AS totalReqQty, IF( table1.testAMT IS NULL, '0', table1.testAMT ) AS testAMT, `mfg_production_2`.`mfg_full_date` FROM `mfg_production_2` LEFT JOIN( SELECT `mfg_ref_id`, `mfg_transaction`, `mfg_prod_planing_qty`, COALESCE(SUM(`mfg_prod_in`), 0) AS testAMT, `mfg_prod_type` FROM `mfg_production_2` GROUP BY mfg_transaction,mfg_ref_id ) table1 ON `mfg_production_2`.`mfg_transaction` = table1.`mfg_transaction` AND `mfg_production_2`.`mfg_ref_id` = table1.`mfg_ref_id` LEFT JOIN products ON `mfg_production_2`.`mfg_sku` = `products`.`p_sku` WHERE `mfg_production_2`.`mfg_prod_type` = 'C' AND `mfg_production_2`.`company_branch` = :branch AND `mfg_production_2`.`mfg_sku_type` = 'FG' GROUP BY `mfg_production_2`.`mfg_transaction`,`mfg_production_2`.`step_count` ORDER BY `mfg_production_2`.`ID` DESC",
