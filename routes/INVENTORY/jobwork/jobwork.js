@@ -1654,7 +1654,7 @@ router.post("/fetchTableAnly", [auth.isAuthorized], async (req, res) => {
           [total_ret],
           [total_consump],
           [total_in],
-          [avg_rate],
+          [last_rate],
         ] = await Promise.all([
           invtDB.query(
             "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_sfg_consump FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'SFG-CONSUMPTION' AND trans_mode = 'default'",
@@ -1709,7 +1709,7 @@ router.post("/fetchTableAnly", [auth.isAuthorized], async (req, res) => {
             },
           ),
           invtDB.query(
-            "SELECT jw_order_rate FROM jw_material_challan WHERE jw_component_id = :component_id AND jw_transaction = :transaction_id",
+           "SELECT in_po_rate AS last_rate FROM rm_location WHERE components_id = :component_id AND jw_transaction_id = :transaction_id AND trans_type = 'JOBWORK' AND trans_mode = 'default' ORDER BY ID DESC LIMIT 1",
             {
               replacements: {
                 component_id: comp.component_key,
@@ -1751,7 +1751,7 @@ router.post("/fetchTableAnly", [auth.isAuthorized], async (req, res) => {
           component_name: comp.c_name,
           part_code: comp.c_part_no,
           bom_cat: "--",
-          avgRate: avg_rate?.jw_order_rate || 0,
+          avgRate: last_rate?.last_rate || 0,
           bom_uom: comp.units_name,
           bom_rate: comp.jw_bom_rate,
           bom_qty: helper.number(comp.jw_bom_qty).toFixed(3),
@@ -1775,14 +1775,16 @@ router.post("/fetchTableAnly", [auth.isAuthorized], async (req, res) => {
     return res.json({
       success: true,
       status: "success",
-      data: {
-        header,
-        body: final,
-      },
+      header,
+      data: final,
     });
   } catch (err) {
     console.error(err);
-    return helper.errorResponse(res, err);
+    return res.json({
+      success: false,
+      status: "error",
+      message: "Something went wrong. Please try again.",
+    });
   }
 });
 // CANCEL PO
@@ -2920,6 +2922,8 @@ async function getTotalPending(component, locIn, locOut, jwID) {
 //     return helper.errorResponse(res, err);
 //   }
 // });
+
+
 router.post("/bom-items", [auth.isAuthorized], async (req, res) => {
   try {
     const valid = new Validator(req.query, {
@@ -3015,6 +3019,62 @@ router.post("/bom-items", [auth.isAuthorized], async (req, res) => {
       });
     }
 
+    const pendingMap = new Map();
+    const rateMap = new Map();
+
+    for (const comp of stmt_comp) {
+      const key = comp.component_key;
+
+      const [pendingRow, rateRow] = await Promise.all([
+        invtDB.query(
+          `SELECT
+             COALESCE(SUM(CASE WHEN trans_type = 'JOBWORK'         AND jw_transaction_id    = :jwID AND trans_mode = 'default' THEN qty + other_qty ELSE 0 END), 0) AS total_issue_qty,
+             COALESCE(SUM(CASE WHEN trans_type = 'TRANSFER'        AND in_jw_transaction_id = :jwID AND trans_mode = 'return'  THEN qty + other_qty ELSE 0 END), 0) AS total_rm_return_qty,
+             COALESCE(SUM(CASE WHEN trans_type = 'SFG-CONSUMPTION' AND jw_transaction_id    = :jwID AND trans_mode = 'default' THEN qty + other_qty ELSE 0 END), 0) AS total_sfg_consump,
+             COALESCE(SUM(CASE WHEN trans_type = 'CONSUMPTION'     AND jw_transaction_id    = :jwID AND trans_mode = 'default' THEN qty + other_qty ELSE 0 END), 0) AS total_consumption
+           FROM rm_location
+           WHERE components_id = :componentKey
+             AND (
+               (trans_type = 'JOBWORK'          AND jw_transaction_id    = :jwID)
+               OR (trans_type = 'TRANSFER'      AND in_jw_transaction_id = :jwID AND trans_mode = 'return')
+               OR (trans_type IN ('SFG-CONSUMPTION','CONSUMPTION') AND jw_transaction_id = :jwID AND trans_mode = 'default')
+             )`,
+          {
+            replacements: { jwID, componentKey: key },
+            type: invtDB.QueryTypes.SELECT,
+          },
+        ),
+
+        invtDB.query(
+          "SELECT in_po_rate AS last_rate FROM rm_location WHERE jw_transaction_id = :jw_id AND components_id = :component_id AND trans_type = 'JOBWORK' AND trans_mode = 'default' ORDER BY ID DESC LIMIT 1",
+          {
+            replacements: { jw_id: jwID, component_id: key },
+            type: invtDB.QueryTypes.SELECT,
+          },
+        ),
+      ]);
+
+      const p = pendingRow[0];
+      pendingMap.set(key, {
+        total_issue_qty: Number(p?.total_issue_qty || 0),
+        total_rm_return_qty: Number(p?.total_rm_return_qty || 0),
+        total_sfg_consump: Number(p?.total_sfg_consump || 0),
+        total_consumption: Number(p?.total_consumption || 0),
+      });
+
+      rateMap.set(
+        key,
+        rateRow.length > 0 ? (rateRow[0].last_rate ?? "0") : "0",
+      );
+    }
+
+    const defaultTotals = {
+      total_issue_qty: 0,
+      total_rm_return_qty: 0,
+      total_sfg_consump: 0,
+      total_consumption: 0,
+    };
+
     if (isExcel) {
       const validBomPartNos = new Set(
         stmt_comp.map((r) => String(r.c_part_no).toLowerCase())
@@ -3044,37 +3104,48 @@ router.post("/bom-items", [auth.isAuthorized], async (req, res) => {
         }))
       : stmt_comp.map((comp) => ({ comp, remarkIndex: null }));
 
-    const result = await Promise.all(
-      itemsToProcess.map(async ({ comp, remarkIndex }) => {
-        const { total_issue_qty, total_rm_return_qty } = await getTotalPending(
-          comp.component_key,
-          venLocation,
-          venLocation,
-          jwID
-        );
+    const result = itemsToProcess.map(({ comp, remarkIndex }) => {
+      const {
+        total_issue_qty,
+        total_rm_return_qty,
+        total_sfg_consump,
+        total_consumption,
+      } = pendingMap.get(comp.component_key) ?? defaultTotals;
 
-        const pending = helper.number(total_issue_qty - total_rm_return_qty);
+      const consump_qty = helper.number(
+        total_consumption > total_issue_qty - total_rm_return_qty
+          ? total_issue_qty - total_rm_return_qty
+          : total_consumption,
+      );
 
-        const entry = {
-          key:                comp.component_key,
-          cat_part_code:      comp.c_new_part_no,
-          part_no:            comp.c_part_no,
-          part_name:          comp.c_name,
-          specification:      comp.c_specification,
-          uom:                comp.units_name,
-          bom_qty:            helper.number(comp.jw_bom_qty),
-          rqd_qty:            helper.number(comp.jw_bom_qty) * sfgCreateQty,
-          pending_jw_qty: pending.toFixed(0),
-          pia_status:         comp.pia_status,
-        };
+      const pending = helper
+        .number(
+          total_issue_qty -
+            (total_sfg_consump + total_rm_return_qty + consump_qty),
+        )
+        .toFixed(2);
 
-        if (isExcel) {
-          entry.remark = excelRemarks[remarkIndex] ?? "";
-        }
+      const entry = {
+        key: comp.component_key,
+        cat_part_code: comp.c_new_part_no,
+        part_no: comp.c_part_no,
+        part_name: comp.c_name,
+        specification: comp.c_specification,
+        uom: comp.units_name,
+        bom_qty: helper.number(comp.jw_bom_qty),
+        rqd_qty: helper.number(comp.jw_bom_qty) * sfgCreateQty,
+        pending_jw_qty: pending,
+        pia_status: comp.pia_status,
+        last_rate: rateMap.get(comp.component_key) ?? "0",
+      };
 
-        return entry;
-      })
-    );
+      if (isExcel) {
+        entry.remark = excelRemarks[remarkIndex] ?? "";
+      }
+
+      return entry;
+    });
+
 
     return res.json({ success: true, status: "success", data: result });
 
@@ -3321,251 +3392,313 @@ async function functionQtyInwardReturn(
 }
 
 // Get JW RM Return Data
-router.post("/getJwRmReturnData", [auth.isAuthorized], async (req, res) => {
-  try {
-    let validation = new Validator(req.body, {
-      skucode: "required",
-      transaction: "required",
-    });
-
-    if (validation.fails()) {
-      return res.json({
-        success: false,
-        status: "error",
-        message: validation.errors.errors,
+router.post(
+  "/saveJwRmReturn",
+  [auth.isAuthorized, auth.checkDuplicacy_db],
+  async (req, res) => {
+    const transaction = await invtDB.transaction();
+    try {
+      const validation = new Validator(req.body, {
+        trans_id: "required",
+        challan_date: "required",
       });
-    }
 
-    const { skucode, transaction } = req.body;
+      if (validation.fails()) {
+        await transaction.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: "something you missing in form field to supply",
+        });
+      }
 
-    let stmt = await invtDB.query(
-      "SELECT * FROM `jw_purchase_req` LEFT JOIN `products` ON `jw_purchase_req`.`jw_po_sku` = `products`.`product_key` LEFT JOIN `units` ON `products`.`p_uom` = `units`.`units_id` LEFT JOIN `admin_login` ON `jw_purchase_req`.`jw_po_insert_by` = `admin_login`.`CustID` LEFT JOIN `ven_basic_detail` ON `jw_purchase_req`.`jw_po_vendor_reg_id` = `ven_basic_detail`.`ven_register_id` WHERE `jw_purchase_req`.`jw_po_sku` = :productcode AND `jw_purchase_req`.`jw_jw_transaction` = :transaction AND `jw_purchase_req`.`company_branch` = :branch GROUP BY `jw_purchase_req`.`jw_jw_transaction`",
-      {
-        replacements: {
-          productcode: skucode,
-          transaction: transaction,
-          branch: req.branch,
-        },
-        type: invtDB.QueryTypes.SELECT,
-      },
-    );
+      const { trans_id } = req.body;
+      const compo_length = req.body.component.length;
 
-    if (stmt.length > 0) {
-      let stmt_0 = await invtDB.query(
-        "SELECT * FROM `jw_purchase_req` WHERE `jw_po_bom_recipe` = 'CREATED' AND  `jw_jw_transaction` = :transaction AND `company_branch` = :branch",
-        {
-          replacements: { transaction: transaction, branch: req.branch },
-          type: invtDB.QueryTypes.SELECT,
-        },
+      /* 🔹 Check BOM exists */
+      const stmt_jw_pur_req = await invtDB.query(
+        "SELECT * FROM jw_purchase_req WHERE jw_po_bom_recipe = 'CREATED'",
+        { type: invtDB.QueryTypes.SELECT },
       );
-      if (stmt_0.length > 0) {
-        let jw_status = "";
-        if (stmt[0].jw_po_issue_qty == "0" && stmt[0].jw_po_status == "A") {
-          jw_status = "Created";
-        } else if (
-          stmt[0].jw_po_issue_qty !== "0" &&
-          stmt[0].jw_po_status == "A"
-        ) {
-          jw_status = "Processing...";
-        } else {
-          jw_status = "Closed";
-        }
 
-        let header = {
-          sku_code: stmt[0].p_sku,
-          product_name: stmt[0].p_name,
-          jobwork_id: stmt[0].jw_jw_transaction,
-          registered_date: moment(stmt[0].jw_po_full_date, "YYYY-MM-DD").format(
-            "DD-MM-YYYY",
-          ),
-          created_by: stmt[0].user_name,
-          ordered_qty: stmt[0].jw_po_order_qty + " " + stmt[0].units_name,
-          jw_status: jw_status,
-          proceed_qty: stmt[0].jw_po_issue_qty,
-          vendor: {
-            name: stmt[0].ven_name,
-            code: stmt[0].ven_register_id,
-          },
-        };
-
-        let stmt2 = await invtDB.query(
-          "SELECT * FROM `jw_purchase_req` WHERE `company_branch` = :branch AND `jw_jw_transaction` = :transaction AND `jw_po_sku` = :productcode GROUP BY `jw_jw_transaction`",
-          {
-            replacements: {
-              transaction: transaction,
-              productcode: skucode,
-              branch: req.branch,
-            },
-            type: invtDB.QueryTypes.SELECT,
-          },
-        );
-
-        if (stmt2.length > 0) {
-          // let bom_subject = stmt2[0].jw_po_recipe;
-          let stmt3 = await invtDB.query(
-            "SELECT * FROM `jw_bom_recipe` LEFT JOIN `components` ON `jw_bom_recipe`.`jw_bom_part` = `components`.`component_key` LEFT JOIN `units` ON `components`.`c_uom` = `units`.`units_id` WHERE `jw_bom_recipe`.`jw_bom_sku` = :productcode AND `jw_bom_recipe`.`jw_bom_po_trans` = :transaction AND `components`.`c_type` = 'R' AND `components`.`c_is_enabled` = 'Y' ORDER BY `components`.`c_part_no` ASC",
-            {
-              replacements: { productcode: skucode, transaction: transaction },
-              type: invtDB.QueryTypes.SELECT,
-            },
-          );
-
-          if (stmt3.length > 0) {
-            let final = [];
-
-            for (let i = 0; i < stmt3.length; i++) {
-              let hsncode = "--";
-              if (stmt3[i].c_hsn != "--") {
-                hsncode = stmt3[i].c_hsn;
-              }
-
-              // PENDING WITH JOBWORKPO
-
-              const [
-                [total_sfg_consump],
-                [total_iss],
-                [total_ret],
-                [total_consump],
-              ] = await Promise.all([
-                invtDB.query(
-                  "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_sfg_consump FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'SFG-CONSUMPTION' AND trans_mode = 'default'",
-                  {
-                    replacements: {
-                      component_id: stmt3[i].component_key,
-                      transaction_id: transaction,
-                    },
-                    type: invtDB.QueryTypes.SELECT,
-                  },
-                ),
-
-                invtDB.query(
-                  "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_issued_rm FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'JOBWORK'",
-                  {
-                    replacements: {
-                      component_id: stmt3[i].component_key,
-                      transaction_id: transaction,
-                    },
-                    type: invtDB.QueryTypes.SELECT,
-                  },
-                ),
-
-                invtDB.query(
-                  "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_returned_rm FROM rm_location WHERE trans_type = 'TRANSFER' AND in_jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_mode = 'return'",
-                  {
-                    replacements: {
-                      component_id: stmt3[i].component_key,
-                      transaction_id: transaction,
-                    },
-                    type: invtDB.QueryTypes.SELECT,
-                  },
-                ),
-
-                invtDB.query(
-                  "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_consumption FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'CONSUMPTION' AND trans_mode = 'default'",
-                  {
-                    replacements: {
-                      component_id: stmt3[i].component_key,
-                      transaction_id: transaction,
-                    },
-                    type: invtDB.QueryTypes.SELECT,
-                  },
-                ),
-              ]);
-
-              const consump_qty = helper.number(
-                total_consump.total_consumption >
-                  total_iss.total_issued_rm - total_ret.total_returned_rm
-                  ? total_iss.total_issued_rm - total_ret.total_returned_rm
-                  : total_consump.total_consumption,
-              );
-
-              const stmt_jwpo_req = await invtDB.query(
-                "SELECT jw_po_issue_qty FROM jw_purchase_req LEFT JOIN jw_bom_recipe ON jw_purchase_req.jw_po_sku = jw_bom_recipe.jw_bom_sku LEFT JOIN bom_recipe ON jw_purchase_req.jw_po_recipe = bom_recipe.subject_id WHERE jw_purchase_req.jw_jw_transaction = :jw_id LIMIT 1",
-                {
-                  replacements: { jw_id: transaction },
-                  type: invtDB.QueryTypes.SELECT,
-                },
-              );
-
-              const pendingWithJw = helper
-                .number(
-                  total_iss.total_issued_rm -
-                    (total_sfg_consump.total_sfg_consump +
-                      total_ret.total_returned_rm +
-                      consump_qty),
-                )
-                .toFixed(2);
-
-              // END PENDING WITH JOBWORKPO
-              // if (stmt3[i].component_key == '20243212419118') {
-
-              //   console.log("=================================");
-
-              //   console.log(
-              //     consump_qty,
-              //     total_iss.total_issued_rm,
-              //     total_ret.total_returned_rm,
-              //     total_sfg_consump.total_sfg_consump,
-              //     pendingWithJw,
-              //   );
-              //   console.log("=================================");
-              // }
-
-              final.push({
-                jobwork_id: stmt3[i].jw_bom_po_trans,
-                component: stmt3[i].c_name,
-                component_key: stmt3[i].component_key,
-                unitsname: stmt3[i].units_name,
-                partcode: stmt3[i].c_part_no,
-                gst_rate: stmt3[i].c_gst,
-                hsncode: hsncode,
-                pendingWithJw: pendingWithJw,
-              });
-            }
-
-            return res.json({
-              success: true,
-              status: "success",
-              data: {
-                header: header,
-                body: final,
-              },
-            });
-          } else {
-            return res.json({
-              success: false,
-              status: "error",
-              message: "PO may be close or part are disabled.",
-            });
-          }
-        } else {
-          return res.json({
-            success: false,
-            status: "error",
-            message: {
-              msg: "PO has been closed therefore it can't be update..2",
-            },
-          });
-        }
-      } else {
+      if (!stmt_jw_pur_req.length) {
+        await transaction.rollback();
         return res.json({
           success: false,
           status: "error",
           message:
-            "you can not return the materials, first create it's BOM and challan for the same..",
+            "You can not return the materials, first create it's BOM and challan for the same..",
         });
       }
-    } else {
+
+      /* 🔹 Fetch JW + BOM data */
+      const stmt = await invtDB.query(
+        `
+        SELECT *, jbr.jw_bom_part, jbr.jw_bom_qty
+        FROM jw_purchase_req
+        LEFT JOIN jw_bom_recipe jbr ON jbr.jw_bom_sku = jw_purchase_req.jw_po_sku
+        LEFT JOIN products ON jw_purchase_req.jw_po_sku = products.p_sku
+        LEFT JOIN units ON products.p_uom = units.units_id
+        LEFT JOIN admin_login ON jw_purchase_req.jw_po_insert_by = admin_login.CustID
+        LEFT JOIN ven_basic_detail ON jw_purchase_req.jw_po_vendor_reg_id = ven_basic_detail.ven_register_id
+        WHERE jw_purchase_req.jw_jw_transaction = :transaction
+          AND jw_purchase_req.company_branch = :branch
+        `,
+        {
+          replacements: { transaction: trans_id, branch: req.branch },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
+
+      if (!stmt.length) {
+        await transaction.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: "Invalid Jobwork transaction",
+        });
+      }
+
+      const bomQtyMap = {};
+      stmt.forEach((r) => {
+        bomQtyMap[r.jw_bom_part] = helper.number(r.jw_bom_qty);
+      });
+
+      const {
+        ven_register_id: vendor,
+        jw_po_vendor_address: address,
+        jw_po_vendor_type: vendor_type,
+        jw_po_ven_add_id: branch,
+        jw_po_recipe: recipe,
+        location,
+        ven_location,
+        jw_po_issue_qty,
+      } = stmt[0];
+
+      /* 🔹 Generate MIN number */
+      const [numRow] = await invtDB.query(
+        "SELECT * FROM ims_numbering WHERE for_number='MIN' FOR UPDATE",
+        { transaction, type: invtDB.QueryTypes.SELECT },
+      );
+
+      let in_txn_no;
+      let out_txn_no = helper.getUniqueNumber();
+      let insert_dt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
+
+      if (numRow) {
+        let suffix = String(Number(numRow.suffix) + 1).padStart(
+          numRow.number_length_limit,
+          "0",
+        );
+        in_txn_no = `${numRow.prefix}/${numRow.session}/${suffix}`;
+      } else {
+        let y = new Date().getFullYear().toString().slice(-2);
+        in_txn_no = `MIN/${y}-${Number(y) + 1}/0001`;
+      }
+
+      await invtDB.query(
+        "UPDATE ims_numbering SET suffix = suffix + 1 WHERE for_number='MIN'",
+        { transaction },
+      );
+
+      /* 🔁 COMPONENT LOOP */
+      for (let i = 0; i < compo_length; i++) {
+        const componentId = req.body.component[i];
+        const bomQty = bomQtyMap[componentId] || 0;
+
+        /* 🔹 Get vendor issued & returned qty */
+        const [[total_sfg_consump], [total_iss], [total_ret], [total_consump]] =
+          await Promise.all([
+            invtDB.query(
+              "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_sfg_consump FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'SFG-CONSUMPTION' AND trans_mode = 'default'",
+              {
+                replacements: {
+                  component_id: componentId,
+                  transaction_id: trans_id,
+                },
+                type: invtDB.QueryTypes.SELECT,
+              },
+            ),
+
+            invtDB.query(
+              "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_issued_rm FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'JOBWORK'",
+              {
+                replacements: {
+                  component_id: componentId,
+                  transaction_id: trans_id,
+                },
+                type: invtDB.QueryTypes.SELECT,
+              },
+            ),
+
+            invtDB.query(
+              "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_returned_rm FROM rm_location WHERE trans_type = 'TRANSFER' AND in_jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_mode = 'return'",
+              {
+                replacements: {
+                  component_id: componentId,
+                  transaction_id: trans_id,
+                },
+                type: invtDB.QueryTypes.SELECT,
+              },
+            ),
+
+            invtDB.query(
+              "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_consumption FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'CONSUMPTION' AND trans_mode = 'default'",
+              {
+                replacements: {
+                  component_id: componentId,
+                  transaction_id: trans_id,
+                },
+                type: invtDB.QueryTypes.SELECT,
+              },
+            ),
+          ]);
+
+        const consump_qty = helper.number(
+          total_consump.total_consumption >
+            total_iss.total_issued_rm - total_ret.total_returned_rm
+            ? total_iss.total_issued_rm - total_ret.total_returned_rm
+            : total_consump.total_consumption,
+        );
+
+        const pendingWithJw = helper
+          .number(
+            total_iss.total_issued_rm -
+              (total_sfg_consump.total_sfg_consump +
+                total_ret.total_returned_rm +
+                consump_qty),
+          )
+          .toFixed(2);
+        // const { total_issue_qty, total_return_qty } =
+        //   await functionQtyInwardReturn(
+        //     trans_id,
+        //     componentId,
+        //     location,
+        //     ven_location
+        //   );
+
+        /* 🔹 Consumption logic (UNCHANGED) */
+        // const maxConsumableQty = helper.number(jw_po_issue_qty * bomQty);
+        // const pendingQty = helper.number(total_issue_qty - total_return_qty);
+
+        // const consump_qty =
+        //   maxConsumableQty > pendingQty ? pendingQty : maxConsumableQty;
+
+        // /* 🔹 Vendor stock AFTER consumption logic */
+        // const vendorStock = helper.number(
+        //   total_issue_qty - consump_qty - total_return_qty
+        // );
+
+        // if(componentId == '20243212419118') {
+        //   console.log("=================================");
+        //   console.log("ISSUE QTY",total_iss.total_issued_rm);
+        //   console.log("SFG CONSUMPTION",total_sfg_consump.total_sfg_consump);
+        //   console.log("RETURNED",total_ret.total_returned_rm);
+        //   console.log("CONSUMPTION",consump_qty);
+        //   console.log("PENDING WITH JW",pendingWithJw);
+        //   console.log("=================================");
+        //   return;
+        // }
+
+        if (pendingWithJw < helper.number(req.body.qty[i])) {
+          await transaction.rollback();
+          return res.json({
+            success: false,
+            status: "error",
+            message: `Insufficient stock for component row ${i + 1}. Available: ${pendingWithJw}`,
+          });
+        }
+
+        /* 🔹 INSERT RM RETURN (INWARD) */
+        await invtDB.query(
+          "INSERT INTO `rm_location` (`txn_session`,`inward_type`,`min_ewaybill`,`trans_mode`,`trans_type`,`company_branch`,`jw_transaction_id`,`in_jw_transaction_id`,`bom_subject_id`,`vendor_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`transfer_transaction_id`,`in_invoice_id`,`in_vendor_name`,`in_vendor_branch`,`in_vendor_addr`,`in_hsn_code`,`in_po_rate`,`rejection_any_remark`,`challan_date`)VALUES (:txn_session,'JW-RMRETURN',:ewaybill,:transmode,:transtype,:branch,:jobwork_id,:in_jw_transaction_id,:recipe,:vendorType,:component,:location_in,:location_out,:qty,:insertdate,:insertby,:transaction_id,:invoice_id,:vendor_code,:vendor_branch,:vendor_address,:hsncode,:rate,:remark, :challan_date)",
+          {
+            replacements: {
+              txn_session: helper.generateTxnSession(),
+              ewaybill: req.body.ewaybill == "" ? "--" : req.body.ewaybill,
+              transmode: "return",
+              transtype: "TRANSFER",
+              branch: req.branch,
+              jobwork_id: trans_id,
+              in_jw_transaction_id: trans_id,
+              recipe: recipe,
+              vendorType: "j01",
+              component: componentId,
+              location_in: req.body.in_location[i],
+              location_out: ven_location,
+              qty: req.body.qty[i],
+              insertdate: insert_dt,
+              insertby: req.logedINUser,
+              transaction_id: in_txn_no,
+              invoice_id: req.body.invoice[i],
+              vendor_code: vendor,
+              vendor_branch: branch,
+              vendor_address: address,
+              hsncode: req.body.hsncode[i],
+              rate: req.body.rate[i],
+              remark: req.body.remark[i] == "" ? "--" : req.body.remark[i],
+              challan_date: req.body.challan_date,
+            },
+            type: invtDB.QueryTypes.INSERT,
+            transaction: transaction,
+          },
+        );
+
+        /* 🔹 AUTO CONSUMPTION ISSUE (ORIGINAL LOGIC) */
+        if (req.body.out_location[i] !== "0") {
+          await invtDB.query(
+            "INSERT INTO `rm_location` (`txn_session`,`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`transfer_transaction_id`,`out_transaction_id`,`is_auto_cons`,`any_remark`)VALUES (:txn_session,:branch,:type,:component,:loc_in,:loc_out,:qty,:indate,:inby,:transaction_id,:out_transaction_id,'Y',:comment)",
+            {
+              replacements: {
+                txn_session: helper.generateTxnSession(),
+                branch: req.branch,
+                type: "ISSUE",
+                component: componentId,
+                loc_in: req.body.out_location[i],
+                loc_out: req.body.in_location[i],
+                qty: req.body.qty[i],
+                indate: moment().format("YYYY-MM-DD HH:mm:ss"),
+                inby: req.logedINUser,
+                transaction_id: in_txn_no,
+                out_transaction_id: out_txn_no,
+                comment: req.body.remark[i] == "" ? "--" : req.body.remark[i],
+              },
+              type: invtDB.QueryTypes.INSERT,
+              transaction: transaction,
+            },
+          );
+        }
+      }
+
+      /* 🔹 Save transaction reference */
+      await invtDB.query(
+        "INSERT INTO transaction_ids (transaction_id,module_type) VALUES (:txn,'MIN-JW-RETURN')",
+        { replacements: { txn: in_txn_no }, transaction },
+      );
+
+      await transaction.commit();
+
+      return res.json({
+        success: true,
+        status: "success",
+        data: { txn: in_txn_no },
+        message:
+          "RM return inward completed successfully. Transaction ref ID [" +
+          in_txn_no +
+          "]",
+      });
+    } catch (err) {
+      console.error(err);
+      await transaction.rollback();
       return res.json({
         success: false,
         status: "error",
-        message: "unable to fetch any transaction request",
+        message:
+          "Internal Error<br/>If this condition persists, contact system administrator",
       });
     }
-  } catch (err) {
-    return helper.errorResponse(res, err);
-  }
-});
+  },
+);
 
 // GET RM RETURN LOCATIONS
 // router.get("/jw_rm_return_location", [auth.isAuthorized], async (req, res) => {

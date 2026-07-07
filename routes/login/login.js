@@ -8,7 +8,7 @@ require("dotenv").config();
 const Validator = require("validatorjs");
 const axios = require("axios");
 const rsa = require("node-rsa");
-let { invtDB, otherDB, invtOakterDB, otherOakterDB } = require("../../config/db/connection");
+let { invtDB, otherDB, invtOakterDB, otherOakterDB, invtC25DB, otherC25DB, } = require("../../config/db/connection");
 const fs = require("fs");
 const sms = require("../../helper/smsGateway");
 
@@ -41,6 +41,8 @@ function getDBsFromNext(next) {
       return { invtConn: invtDB, otherConn: otherDB };
     } else if (hostname === "oakter.mscorpres.com") {
       return { invtConn: invtOakterDB, otherConn: otherOakterDB };
+    } else if (hostname === "c25.mscorpres.com") {
+      return { invtConn: invtC25DB, otherConn: otherC25DB };
     }
     return null; 
   } catch {

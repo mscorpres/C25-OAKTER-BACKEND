@@ -10,6 +10,8 @@ const multer = require("multer");
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 
+const helper = require("../../../../helper/helper");
+
 let {
   invtDB,
   tallyDB,
@@ -90,7 +92,7 @@ router.post(
     });
     if (validation_vendor.fails()) {
       return res.json({
-        message: validation_vendor.errors.all(),
+        message: helper.firstErrorValidatorjs(validation_vendor),
         status: "error",
         success: false,
       });
@@ -108,7 +110,7 @@ router.post(
     });
     if (validation_branch.fails()) {
       return res.json({
-        message: validation_branch.errors.all(),
+        message: helper.firstErrorValidatorjs(validation_branch),
         status: "error",
         success: false,
       });
@@ -124,7 +126,7 @@ router.post(
       });
       if (validation_msme.fails()) {
         return res.json({
-          message: validation_msme.errors.all(),
+          message: helper.firstErrorValidatorjs(validation_msme),
           status: "error",
           success: false,
         });
@@ -258,7 +260,7 @@ router.post(
         address: branch.address,
         pincode: branch.pincode,
         fax: branch?.fax || "--",
-        email: branch.email,
+        email: branch.email ?? "n/a",
         mobile: branch.mobile,
         vendor_id: registrationCode,
         insertdt: moment().tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
