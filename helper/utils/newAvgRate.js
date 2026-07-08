@@ -141,7 +141,9 @@ exports.newWeightedAverageRate = async function (
           txn.vendor_type === "j01") ||
         (txn.trans_type === "INWARD" && txn.in_module == "PART-CONV") ||
         (txn.trans_type === "INWARD" && txn.in_module == "IN-QCA") ||
-        (txn.trans_type === "TRANSFER" && txn.in_module == "IN-TRN");
+        (txn.trans_type === "TRANSFER" &&
+          txn.in_module == "IN-TRN" &&
+          rate > 0);
 
       // ── WVR DOWN (-) ──────────────────────────────────────────────────
       const isOutward =
@@ -299,7 +301,9 @@ exports.lastNewWeightedAverageRate = async function (
           txn.vendor_type === "j01")  ||
         (txn.trans_type === "INWARD" && txn.in_module == "PART-CONV") ||
         (txn.trans_type === "INWARD" && txn.in_module == "IN-QCA") ||
-        (txn.trans_type === "TRANSFER" && txn.in_module == "IN-TRN");
+        (txn.trans_type === "TRANSFER" &&
+          txn.in_module == "IN-TRN" &&
+          rate > 0);
 
       // ── WVR DOWN (-) ──────────────────────────────────────────────────
       const isOutward =
@@ -332,6 +336,155 @@ exports.lastNewWeightedAverageRate = async function (
     return parseFloat(finalWVR.toFixed(10));
   } catch (error) {
     console.error("Error calculating last WVR:", error);
+    throw error;
+  }
+};
+
+
+exports.lastNewWeightedAverageRateWithStock = async function (
+  componentKey,
+  date = null,
+) {
+  try {
+    const cutoffMs = new Date(CUTOFF_DATE).getTime();
+
+    const dateCondition = date
+      ? `AND DATE_FORMAT(rm_location.insert_date, '%Y-%m-%d %H:%i:%s') <= :date`
+      : ``;
+
+    const transactions = await invtDB.query(
+      `SELECT
+                rm_location.ID,
+                rm_location.trans_type,
+                rm_location.in_module,
+                rm_location.vendor_type,
+                rm_location.trans_mode,
+                rm_location.currency_type,
+                rm_location.exchange_rate,
+                rm_location.custom_duty,
+                rm_location.freight_charge,
+                lm_in.loc_storable,
+                rm_location.qty,
+                rm_location.in_po_rate,
+                rm_location.final_rate,
+                rm_location.insert_date
+            FROM rm_location
+            LEFT JOIN location_main AS lm_in  ON lm_in.location_key = rm_location.loc_in
+            LEFT JOIN location_main AS lm_out ON lm_out.location_key = rm_location.loc_out
+            WHERE rm_location.components_id = :componentKey
+              AND rm_location.trans_type NOT IN ('CANCELLED', 'REJECTION', 'MIN_PENDING', 'REVERSE')
+              ${dateCondition}
+            ORDER BY rm_location.insert_date ASC, rm_location.ID ASC`,
+      {
+        replacements: {
+          componentKey: componentKey,
+          ...(date && { date: date }),
+        },
+        type: invtDB.QueryTypes.SELECT,
+      },
+    );
+
+    const hasPostCutoffTxn = transactions.some(
+      (txn) => new Date(txn.insert_date).getTime() > cutoffMs,
+    );
+
+    if (!hasPostCutoffTxn) {
+      const avgRows = await invtDB.query(
+        `SELECT last_rate, closing_stock
+                 FROM tbl_average_rate_2026
+                 WHERE component_key = :componentKey
+                 LIMIT 1`,
+        {
+          replacements: { componentKey: componentKey },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
+
+      if (avgRows.length > 0) {
+        return {
+          rate: parseFloat(parseFloat(avgRows[0].last_rate).toFixed(10)),
+          qty: parseFloat(avgRows[0].closing_stock) || 0,
+        };
+      }
+      return { rate: 0, qty: 0 };
+    }
+
+    const avgRows = await invtDB.query(
+      `SELECT last_rate, closing_stock, closing_stock_value
+             FROM tbl_average_rate_2026
+             WHERE component_key = :componentKey
+             LIMIT 1`,
+      {
+        replacements: { componentKey: componentKey },
+        type: invtDB.QueryTypes.SELECT,
+      },
+    );
+
+    let runningQty = 0;
+    let runningValue = 0;
+    let lastWVR = 0;
+
+    if (avgRows.length > 0) {
+      runningQty = parseFloat(avgRows[0].closing_stock) || 0;
+      runningValue = parseFloat(avgRows[0].closing_stock_value) || 0;
+      lastWVR = parseFloat(avgRows[0].last_rate) || 0;
+    }
+
+    for (const txn of transactions) {
+      if (new Date(txn.insert_date).getTime() <= cutoffMs) {
+        continue;
+      }
+
+      const qty = parseFloat(txn.qty) || 0;
+      const rate = calculateRate(txn);
+      const locStorable = parseInt(txn.loc_storable);
+
+      const isInward =
+        (txn.trans_type === "INWARD" &&
+          txn.in_module !== "IN-WO" &&
+          txn.vendor_type === "v01") ||
+        (txn.trans_type === "INWARD" &&
+          txn.in_module === "IN-JWI" &&
+          txn.vendor_type === "j01") ||
+        (txn.trans_type === "TRANSFER" &&
+          txn.trans_mode === "return" &&
+          txn.vendor_type === "j01") ||
+        (txn.trans_type === "INWARD" && txn.in_module == "PART-CONV") ||
+        (txn.trans_type === "INWARD" && txn.in_module == "IN-QCA") ||
+        (txn.trans_type === "TRANSFER" &&
+          txn.in_module == "IN-TRN" &&
+          rate > 0);
+
+      const isOutward =
+        (locStorable === 0 &&
+          ["ISSUE", "CONSUMPTION"].includes(txn.trans_type)) ||
+        (txn.trans_type === "JOBWORK" && txn.vendor_type === "j01") ||
+        txn.trans_type === "SFG-CONSUMPTION" ||
+        (txn.trans_type === "CONSUMPTION" && txn.in_module === "PART-CONV");
+
+      if (isInward) {
+        runningValue = runningValue + qty * rate;
+        runningQty = runningQty + qty;
+      } else if (isOutward) {
+        const currentWVR = runningQty > 0 ? runningValue / runningQty : lastWVR;
+        runningValue = Math.max(0, runningValue - qty * currentWVR);
+        runningQty = Math.max(0, runningQty - qty);
+      }
+
+      if (runningQty > 0) {
+        lastWVR = runningValue / runningQty;
+      } else {
+        runningValue = 0;
+      }
+    }
+
+    const finalWVR = runningQty > 0 ? runningValue / runningQty : lastWVR;
+    return {
+      rate: parseFloat(finalWVR.toFixed(10)),
+      qty: runningQty,
+    };
+  } catch (error) {
+    console.error("Error calculating last WVR with stock:", error);
     throw error;
   }
 };

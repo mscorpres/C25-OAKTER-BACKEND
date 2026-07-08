@@ -21,7 +21,7 @@ router.post(
 
     if (validation.fails()) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: helper.firstErrorValidatorjs(validation),
       });
@@ -38,7 +38,7 @@ router.post(
 
     if (stmt2.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: "SKU not found",
       });
@@ -57,7 +57,7 @@ router.post(
 
     if (stmt1.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: "Process not assign to SKU!!!",
       });
@@ -66,7 +66,7 @@ router.post(
     // CHECK LOAD SIZE
     if (Number(req.body.numberRows) > Number(stmt1[0].lot_size)) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: `Generated Qty is exceeded ( lot size ${stmt1[0].lot_size}) !!!`,
       });
@@ -87,7 +87,7 @@ router.post(
       Number(req.body.numberRows)
     ) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: `Generated Qty is exceeded ( PPR qty ${checkPpr[0].prod_planned_qty} - ${checkPpr[0].prod_executed_qty}) !!!`,
       });
@@ -217,7 +217,7 @@ router.post(
       if (checkData.length > 0) {
         await transaction.rollback();
         return res.json({
-          status: "error", success: false,
+          status: "error",
           success: false,
           message: "This QCA is already Pass",
         });
@@ -246,7 +246,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -263,7 +263,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
   if (stmt2.length === 0) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: "SKU not found",
     });
@@ -282,7 +282,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
   if (stmt1.length === 0) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: "Process not assign to SKU!!!",
     });
@@ -320,7 +320,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
       if (prevLeveldata.length === 0) {
         await transaction.rollback();
         return res.json({
-          status: "error", success: false,
+          status: "error", 
           success: false,
           message:
             "This data not be present at Previous level or Fail at previous level.",
@@ -345,7 +345,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
       if (checkData[0].qca_result === "PASS") {
         await transaction.rollback();
         return res.json({
-          status: "error", success: false,
+          status: "error", 
           success: false,
           message: "This QCA is already Pass",
         });
@@ -377,7 +377,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
     if (result.length === 0) {
       await transaction.rollback();
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: "Failed to added data",
       });
@@ -385,7 +385,7 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
     await transaction.commit();
     return res.json({
-      status: "success", success: true,
+      status: "success",
       success: true,
       message: "Data has been successfully added",
     });
@@ -403,7 +403,7 @@ router.post("/fetch_testing_data", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -443,7 +443,7 @@ router.post("/delete_testing_data", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -527,14 +527,14 @@ router.post("/delete_testing_data", [auth.isAuthorized], async (req, res) => {
 
       await transaction.commit();
       return res.json({
-        status: "success", success: true,
+        status: "success",
         success: true,
         message: "Data deleted successfully",
       });
     } else {
       await transaction.rollback();
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: "Failed to delete data",
       });
@@ -1038,7 +1038,7 @@ router.post("/getQAProcesses", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
       message: "Please provide sku",
     });
@@ -1055,14 +1055,14 @@ router.post("/getQAProcesses", [auth.isAuthorized], async (req, res) => {
 
     if (processes.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
         message: "No processes found for the provided SKU",
       });
     }
 
     return res.json({
-      status: "success", success: true,
+      status: "success",
       success: true,
       message: "Data fetched successfully",
       data: processes,
@@ -1591,7 +1591,8 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
     let bom_id = stmt2[0].qa_subject;
     let Lot_size = stmt2[0].lot_size;
 
-    await invtDB.query(
+    //Update Lot NO.
+    const updateResult = await invtDB.query(
       "UPDATE qca SET lot_no = :lotNo WHERE qca_barcode IN (:qca_barcode) AND qca_result = :result AND qca_process = :process",
       {
         replacements: {
@@ -1628,7 +1629,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           req: req.body.ppr_transaction,
           access: req.body.accesstoken,
-          branch: "BRMSC012",
+          branch: "BROAKTRC25",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1672,7 +1673,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           transaction: req.body.ppr_transaction,
           accesstoken: req.body.accesstoken,
-          branch: "BRMSC012",
+          branch: "BROAKTRC25",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1770,9 +1771,6 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
         }
       }
 
-      let insertDate = moment(new Date())
-        .tz("Asia/Kolkata")
-        .format("YYYY-MM-DD HH:mm:ss");
 
       let productAvgRate = 0;
 
@@ -1782,7 +1780,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRMSC012",
+              branch: "BROAKTRC25",
               lot_qty: lot_qty,
               sku: sku_sfg,
               sku_type: sku_type,
@@ -1790,7 +1788,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               conLoc: consump_Loc,
               comment: "--",
               insertdate: moment(new Date()).format("YYYY-MM-DD"),
-              fulldate: insertDate,
+              fulldate:  moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
               by: req.logedINUser,
               transaction: mfg_transaction,
               ref: req.body.ppr_transaction,
@@ -1804,19 +1802,21 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           },
         );
 
-        await invtDB.query(
+        
+       //INSERT DATA INTO MFG_PRODUCTION_3
+        let stmt_insert = await invtDB.query(
           "INSERT INTO mfg_production_3 (txn_session,company_branch, mfg_pro_apr_sku, mfg_approve_in_qty, mfg_pro_location_in, mfg_pro_apr_by, ppr_created_by, mfgphase2_insert_date, mfg_pro_apr_fulldate, mfg_ref_transid_1, mfg_ref_transid_2, type) VALUES (:txn_session,:branch, :sku, :lot_qty, :location, :approved_by, :created_by, :insert_date, :full_date, :ppr_no, :mfg_id, 'IN')",
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRMSC012",
+              branch: "BROAKTRC25",
               sku: sku_sfg,
               lot_qty: lot_qty,
               location: send_Loc,
               approved_by: req.logedINUser,
               created_by: pprcreatedBY,
               full_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
-              insert_date: insertDate,
+              insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
               ppr_no: req.body.ppr_transaction,
               mfg_id: mfg_transaction,
             },
@@ -1826,7 +1826,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
         );
 
         if (stmt1.length > 0) {
-          const bomComponents = await invtDB.query(
+          let bomComponents = await invtDB.query(
             "SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ",
             {
               replacements: { bomid: bom_id },
@@ -1839,6 +1839,8 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               const consumption_quantity = lot_qty * comp.qty;
 
               const [avgRate, inwardRows, outwardRows] = await Promise.all([
+                // require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+                //   comp.component_id,
                 require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
                   comp.component_id,
                 ),
@@ -1925,26 +1927,27 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
              (txn_session, company_branch, trans_type, components_id, qty,
               mfg_bom_qty, loc_out, insert_date, insert_by,
               mfg_ppr_trans_id_1, mfg_ppr_trans_id_2, mfg_step_count,
-              bom_subject_id, any_remark)
+              bom_subject_id, any_remark,in_po_rate)
            VALUES
              (:txn_session, :branch, 'CONSUMPTION', :component, :qty,
               :bom_qty, :loc_out, :insert_date, :insert_by,
-              :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark)`,
+              :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark, :in_po_rate)`,
               {
                 replacements: {
                   txn_session: helper.generateTxnSession(),
-                  branch: "BRMSC012",
+                  branch: "BROAKTRC25",
                   component: comp.component_id,
                   qty: consumption_quantity,
                   bom_qty: comp.qty,
                   loc_out: consump_Loc,
-                  insert_date: insertDate,
+                  insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
                   insert_by: req.logedINUser,
                   mfg_id_1: req.body.ppr_transaction,
                   mfg_id_2: mfg_transaction,
                   step_count: stepcount,
                   subject: bom_id,
                   remark: "--",
+                  in_po_rate: productAvgRate,
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction,
@@ -2057,12 +2060,12 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             },
           );
 
-          await invtDB.query(
+          let stmt_new_comp = await invtDB.query(
             "INSERT INTO rm_location (txn_session,in_module,company_branch,components_id,qty,loc_in,any_remark,insert_date,insert_by,in_transaction_id, in_po_rate) VALUES (:txn_session,'IN-QCA',:branch,:component,:qty,:loc_in,:remark,:insert_date,:insert_by,:in_transaction_id, :in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRMSC012",
+                branch: "BROAKTRC25",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 in_po_rate: productAvgRate,
@@ -2079,11 +2082,11 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
 
           let stmt1 = await invtDB.query(
-            "INSERT INTO `rm_location` (`txn_session`,`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`)VALUES (:txn_session,'IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
+            "INSERT INTO `rm_location` (`txn_session`,`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`,in_po_rate)VALUES (:txn_session,'IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id, :in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRMSC012",
+                branch: "BROAKTRC25",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 loc_in: send_Loc,
@@ -2092,6 +2095,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
                 insert_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
                 insert_by: req.logedINUser,
                 transfer_transaction_id: transactionID,
+                in_po_rate: productAvgRate,
               },
               type: invtDB.QueryTypes.INSERT,
               transaction: transaction,
@@ -2106,17 +2110,19 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
         await transaction.commit();
         return res.json({
-          data: {
-            Lot_No: lot_no,
-            Lot_Qty: lot_qty,
-            PPR_No: req.body.ppr_transaction,
-            SKU: req.body.skucode,
-            Lot_type: req.body.result,
-            Process: process_name,
-          },
-          success: true, status: "success", message: "Lot Transfer Successfully",
+          success: true,
+          status: "success",
+          Lot_No: lot_no,
+          Lot_Qty: lot_qty,
+          PPR_No: req.body.ppr_transaction,
+          SKU: req.body.skucode,
+          Lot_type: req.body.result,
+          Process: process_name,
+          message: "Lot Transfer Successfully",
         });
-      } else {
+      }
+      
+      else {
         await transaction.rollback();
         return res.json({ success: false, status: "error", message: "an error occured while updating your request" });
       }

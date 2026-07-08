@@ -1069,16 +1069,13 @@ router.post("/fetchPendingData4PO", [auth.isAuthorized], async (req, res) => {
       for (let i = 0; i < result.length; i++) {
         if (result[i].totalIn_Qty > 0) {
           let status = "--";
-          if (result[i].approval_status == "P") {
+           if (result[i].approval_status == "P") {
             status = "PENDING";
-          }
-          if (result[i].approval_status == "A") {
+          } else if (result[i].approval_status == "A") {
             status = "APPROVED";
-          }
-          if (result[i].approval_status == "R") {
+          } else if (result[i].approval_status == "R") {
             status = "REJECTED";
-          }
-          if (result[i].approval_status == "D") {
+          } else if (result[i].approval_status == "D") {
             status = "CANCELLED";
           }
           finalResult.push({
@@ -1108,14 +1105,6 @@ router.post("/fetchPendingData4PO", [auth.isAuthorized], async (req, res) => {
             project_name: result[i].project_description ?? "NA",
             requested_by: result[i].raise_by ?? "NA",
             approved_by: result[i].approve_by ?? "NA",
-            poacceptstatus:
-              result[i].statusforporequest === "A"
-                ? "APPROVED"
-                : result[i].statusforporequest === "R"
-                ? "REJECTED"
-                : "OLD",
-
-            poacceptBy: result[i].porequestApprovalId,
           });
         }
       }
@@ -2010,13 +1999,10 @@ router.post(
           });
         }
 
-        let rejectionCheckStmt = await invtDB.query(
-          "SELECT * FROM `po_purchase_req` WHERE `po_transaction` = :transaction AND `statusforporequest` = :status",
+       const rejectionCheckStmt = await invtDB.query(
+          "SELECT ID FROM `po_purchase_req` WHERE `po_transaction` = :transaction AND `approval_status` = 'R' LIMIT 1",
           {
-            replacements: {
-              transaction: req.body.poid,
-              status: "R",
-            },
+            replacements: { transaction: req.body.poid },
             type: invtDB.QueryTypes.SELECT,
           }
         );
@@ -5094,7 +5080,11 @@ router.post("/rejectPo", [auth.isAuthorized], async (req, res) => {
 //! Use of Multer
 var storage = multer.diskStorage({
   destination: (req, file, callBack) => {
-    callBack(null, "./uploads/temp/");
+    const uploadDir = "./uploads/temp/";
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    callBack(null, uploadDir);
   },
   filename: (req, file, callBack) => {
     callBack(
@@ -5329,27 +5319,18 @@ router.post("/requested", [auth.isAuthorized], async (req, res) => {
       for (let i = 0; i < result.length; i++) {
         if (result[i].totalIn_Qty > 0) {
           let status = "--";
-          if (result[i].approval_status == "P") {
+           if (result[i].approval_status == "P" && result[i].statusforporequest === "UV") {
+            status = "UNDER VERIFICATION";
+          } else if (result[i].approval_status == "P") {
             status = "PENDING";
-          }
-          if (result[i].approval_status == "A") {
+          } else if (result[i].approval_status == "A") {
             status = "APPROVED";
-          }
-          if (result[i].approval_status == "R") {
+          } else if (result[i].approval_status == "R") {
             status = "REJECTED";
-          }
-          if (result[i].approval_status == "D") {
+          } else if (result[i].approval_status == "D") {
             status = "CANCELLED";
           }
 
-          let poacceptstatus = "PENDING";
-          if (result[i].statusforporequest === "A") {
-            poacceptstatus = "APPROVED";
-          } else if (result[i].statusforporequest === "R") {
-            poacceptstatus = "REJECTED";
-          } else if (result[i].statusforporequest === "UV") {
-            poacceptstatus = "UNDER VERIFICATION";
-          }
           const creatorIds = [
             ...new Set(result.map((r) => r.po_raise_by).filter(Boolean)),
           ];
@@ -5409,7 +5390,6 @@ router.post("/requested", [auth.isAuthorized], async (req, res) => {
             project_name: result[i].project_description ?? "NA",
             requested_by: result[i].raise_by ?? "NA",
             approved_by: result[i].approve_by ?? "NA",
-            poacceptstatus: poacceptstatus,
             leader_email: leader.leader_email || "NA",
             leader_name: leader.leader_name || "NA",
             leader_id: leader.leader_id || "NA",
@@ -5478,11 +5458,11 @@ router.post(
       const userInfo = req.userPermissions;
 
       // Get approval level permissions from JSON
-      const hasFirstLevelPermission = userInfo.permissions.can_approve_po_first_level === true;
+      // const hasFirstLevelPermission = userInfo.permissions.can_approve_po_first_level === true;
       const hasFinalLevelPermission = userInfo.permissions.can_approve_po_final_level === true;
 
       // Check if user has any approval permission
-      if (!hasFirstLevelPermission && !hasFinalLevelPermission) {
+      if ( !hasFinalLevelPermission) {
         await t.rollback();
         return res.json({
           success: false,
@@ -5493,10 +5473,10 @@ router.post(
 
       // Check PO current status and statusforporequest
       const poCheck = await invtDB.query(
-        `SELECT po_transaction, approval_status, statusforporequest, po_cost_center
-         FROM po_purchase_req 
-         WHERE po_transaction = :po 
-         AND company_branch = :branch 
+         `SELECT DISTINCT po_transaction, approval_status
+         FROM po_purchase_req
+         WHERE po_transaction = :po
+         AND company_branch = :branch
          LIMIT 1`,
         {
           replacements: { po: po_transaction, branch: req.branch },
@@ -5514,173 +5494,67 @@ router.post(
         });
       }
 
-      const currentPOStatus = poCheck[0].approval_status || 'P';
-      const currentStatusForPORequest = poCheck[0].statusforporequest || 'N';
-
-      // **VALIDATION LOGIC**
-      
-      // First-level users can ONLY work when statusforporequest is Pending (N)
-      if (hasFirstLevelPermission && !hasFinalLevelPermission) {
-        if (!['N', null, ''].includes(currentStatusForPORequest)) {
+       for (const comp of components) {
+        if (!["A", "R"].includes(comp.status)) {
           await t.rollback();
           return res.json({
-            success: false,
+            code: 500,
             status: "error",
-            message: 
-              `You can only approve/reject POs in 'Pending (N)' status. This PO request is currently in '${currentStatusForPORequest}' status.` 
+            message: { msg: "Status must be 'A' (Approve) or 'R' (Reject)" },
           });
         }
       }
 
-      // Final-level users can ONLY work when statusforporequest is UV (Under Verification)
-      if (hasFinalLevelPermission && !hasFirstLevelPermission) {
-        if (currentStatusForPORequest !== 'UV') {
-          await t.rollback();
-          return res.json({
-            success: false,
-            status: "error",
-            message: `You can only give final approval to POs in 'Under Verification (UV)' status. This PO request is currently in '${currentStatusForPORequest}' status.`
-          });
-        }
-      }
-
-      // Users with both permissions
-      if (hasFirstLevelPermission && hasFinalLevelPermission) {
-        // They can work on both N and UV, but not on already approved (A)
-        if (!['N', 'UV', null, ''].includes(currentStatusForPORequest)) {
-          await t.rollback();
-          return res.json({
-            success: false,
-            status: "error",
-            message: `This PO request is already in '${currentStatusForPORequest}' status and cannot be modified.`,
-          });
-        }
-      }
-
-      // To store rate mismatch info
+      // Rate mismatch check (informational only)
       const rateMismatchComponents = [];
-
-      // LOOP THROUGH COMPONENTS
       for (const comp of components) {
         const { component_key, status } = comp;
+        if (status !== "A") continue;
 
-        if (!["A", "R"].includes(status)) {
-          await t.rollback();
-          return res.json({
-            success: false,
-            status: "error",
-            message: "Status must be 'A' (Approve) or 'R' (Reject)",
-          });
-        }
-
-        // Fetch PO rate
         const poRateData = await invtDB.query(
-          `SELECT po_order_rate, c_name, c_part_no 
-           FROM po_purchase_req 
+          `SELECT po_order_rate, c_name, c_part_no
+           FROM po_purchase_req
            LEFT JOIN components ON po_purchase_req.po_part_no = components.component_key
-           WHERE po_transaction = :po 
-             AND po_part_no = :key 
-             AND company_branch = :branch 
+           WHERE po_transaction = :po
+             AND po_part_no = :key
+             AND company_branch = :branch
            LIMIT 1`,
           {
-            replacements: {
-              po: po_transaction,
-              key: component_key,
-              branch: req.branch,
-            },
+            replacements: { po: po_transaction, key: component_key, branch: req.branch },
             type: invtDB.QueryTypes.SELECT,
             transaction: t,
           }
         );
 
-        if (!poRateData.length) {
-          await t.rollback();
-          return res.json({
-            success: false,
-            status: "error",
-            message: `Component ${component_key} not found in this PO`,
-          });
-        }
+        if (poRateData.length) {
+          const order_rate = parseFloat(poRateData[0].po_order_rate || 0);
+          const lastRateRaw = await require("../../../helper/utils/avgRate").getLastInwardRate(
+            component_key,
+            vendor_code
+          );
+          const last_actual_rate = parseFloat(lastRateRaw || 0);
+          const rateDifference = Math.abs(order_rate - last_actual_rate);
 
-        const order_rate = parseFloat(poRateData[0].po_order_rate || 0);
-        const component_name = poRateData[0].c_name || component_key;
-        const part_no = poRateData[0].c_part_no || "";
-
-        // Fetch last inward rate
-        const lastRateRaw = await require("../../../helper/utils/avgRate").getLastInwardRate(
-          component_key,
-          vendor_code
-        );
-
-        const last_actual_rate = parseFloat(lastRateRaw || 0);
-        const rateDifference = Math.abs(order_rate - last_actual_rate);
-
-        // Rate mismatch check (tolerance of 0.01)
-        const isRateMismatch = rateDifference > 0.01;
-
-        if (status === "A" && isRateMismatch) {
-          
-          if (hasFirstLevelPermission && !hasFinalLevelPermission) {
+          if (rateDifference > 0.01) {
             rateMismatchComponents.push({
               component_key,
-              component_name,
-              part_no,
+              component_name: poRateData[0].c_name || component_key,
+              part_no: poRateData[0].c_part_no || "",
               order_rate: order_rate.toFixed(4),
               last_rate: last_actual_rate.toFixed(4),
               difference: rateDifference.toFixed(4),
-            });
-          }
-          
-          // If user with both permissions is working on Pending (N) PO → BLOCK
-          if (hasFirstLevelPermission && hasFinalLevelPermission && currentStatusForPORequest === 'N') {
-            rateMismatchComponents.push({
-              component_key,
-              component_name,
-              part_no,
-              order_rate: order_rate.toFixed(4),
-              last_rate: last_actual_rate.toFixed(4),
-              difference: rateDifference.toFixed(4),
-            });
-          }
-
-          // If final-level user is approving UV PO with rate mismatch → ALLOW 
-          if (hasFinalLevelPermission && currentStatusForPORequest === 'UV') {
-            rateMismatchComponents.push({
-              component_key,
-              component_name,
-              part_no,
-              order_rate: order_rate.toFixed(4),
-              last_rate: last_actual_rate.toFixed(4),
-              difference: rateDifference.toFixed(4),
-              overridden_by: req.logedINUser,
-              note: "Rate mismatch approved by final authority"
+              note: "Rate mismatch - approved by authority",
             });
           }
         }
       }
 
-      // **BLOCK if rate mismatch found and user is NOT doing final approval on UV PO**
-      const shouldBlockForRateMismatch = rateMismatchComponents.length > 0 && 
-        (currentStatusForPORequest !== 'UV' || !hasFinalLevelPermission);
-
-      if (shouldBlockForRateMismatch) {
-        await t.rollback();
-        return res.json({
-          success: false,
-          status: "error",
-          message: "Rate mismatch detected! Only final approval authority can approve POs with rate mismatches when they are in 'Under Verification (UV)' status.",
-          data: rateMismatchComponents,
-        });
-      }
-
-      // Fetch PO Creator for email notification
+      // Fetch PO creator for email
       const poCreatorData = await invtDB.query(
-        `SELECT DISTINCT po_raise_by, u.Email_ID 
-         FROM po_purchase_req p 
-         LEFT JOIN ${global.ims_db_name}.admin_login u 
-           ON u.CustID = p.po_raise_by 
-         WHERE p.po_transaction = :po 
-           AND p.company_branch = :branch`,
+        `SELECT DISTINCT po_raise_by, u.Email_ID
+         FROM po_purchase_req p
+         LEFT JOIN ${global.ims_db_name}.admin_login u ON u.CustID = p.po_raise_by
+         WHERE p.po_transaction = :po AND p.company_branch = :branch`,
         {
           replacements: { po: po_transaction, branch: req.branch },
           type: invtDB.QueryTypes.SELECT,
@@ -5688,98 +5562,89 @@ router.post(
         }
       );
 
-      let poCreatorEmail = "";
-      let poCreatorName = "User";
-
-      if (poCreatorData.length > 0) {
-        poCreatorEmail = poCreatorData[0].Email_ID || "";
-        poCreatorName = poCreatorData[0].po_raise_by || "User";
-      }
+      const poCreatorEmail = poCreatorData[0]?.Email_ID || "";
+      const poCreatorName = poCreatorData[0]?.po_raise_by || "User";
 
       const rejectedComponents = components.filter((c) => c.status === "R");
       const approvedComponents = components.filter((c) => c.status === "A");
       const hasRejection = rejectedComponents.length > 0;
       const hasApproval = approvedComponents.length > 0;
 
-      // **APPLY UPDATES**
+      // Apply updates directly on approval_status + statusforporequest (display badge)
       for (const comp of components) {
         const { component_key, status, remark: compRemark = "" } = comp;
         const finalRemark = (compRemark || remark).trim();
 
-        let updateQuery = `
-          UPDATE po_purchase_req
-          SET statusforporequest = :status,
-              remarkbyactacoutteam = :remark,
-              porequestApprovalId = :approvedBy
-        `;
-
-      
-        if (hasFinalLevelPermission && currentStatusForPORequest === 'UV' && status === "A") {
-          updateQuery += `, approval_status = 'A', po_approve_by = :approvedBy`;
-        }
-
-        updateQuery += `
-          WHERE po_transaction = :po
-          AND po_part_no = :component_key
-          AND company_branch = :branch
-        `;
-
-        // Determine the new statusforporequest value
-        let newStatusForPORequest = status; // 'A' or 'R'
-        
-        // If first-level approving pending (N) → change to UV
-        if (status === 'A' && currentStatusForPORequest === 'N' && !hasFinalLevelPermission) {
-          newStatusForPORequest = 'A';
-        }
-        
-        // If user with both permissions approving pending (N) → change to UV
-        if (status === 'A' && currentStatusForPORequest === 'N' && hasFirstLevelPermission && hasFinalLevelPermission) {
-          newStatusForPORequest = 'A';
-        }
-
-        // If rejecting → change back to N (Pending)
-        if (status === 'R') {
-          newStatusForPORequest = 'R';
-        }
-
-        await invtDB.query(updateQuery, {
-          replacements: {
-            status: newStatusForPORequest,
-            remark: finalRemark,
-            approvedBy: req.logedINUser,
-            po: po_transaction,
-            component_key,
-            branch: req.branch,
-          },
-          type: invtDB.QueryTypes.UPDATE,
-          transaction: t,
-        });
-      }
-
-      // **INSERT LOG ENTRY**
-      let logStatus = "";
-      let logRemark = remark || "--";
-
-      if (hasRejection) {
-        logStatus = rejectedComponents.length === components.length ? "FULLY REJECTED" : "PARTIALLY REJECTED";
-        logRemark = `Components rejected: ${rejectedComponents.map(c => c.component_key).join(", ")}. ${logRemark}`;
-      } else if (hasApproval) {
-        if (hasFinalLevelPermission && currentStatusForPORequest === 'UV') {
-          logStatus = "FINAL APPROVED";
+        if (status === "A") {
+          await invtDB.query(
+            `UPDATE po_purchase_req
+             SET approval_status = 'A',
+                 statusforporequest = 'A',
+                 po_approve_by = :approvedBy,
+                 remarkbyactacoutteam = :remark,
+                 porequestApprovalId = :approvedBy
+             WHERE po_transaction = :po
+               AND po_part_no = :component_key
+               AND company_branch = :branch`,
+            {
+              replacements: {
+                approvedBy: req.logedINUser,
+                remark: finalRemark,
+                po: po_transaction,
+                component_key,
+                branch: req.branch,
+              },
+              type: invtDB.QueryTypes.UPDATE,
+              transaction: t,
+            }
+          );
         } else {
-          logStatus = "FIRST LEVEL APPROVED";
+          await invtDB.query(
+            `UPDATE po_purchase_req
+             SET approval_status = 'R',
+                 statusforporequest = 'R',
+                 po_approve_by = :approvedBy,
+                 po_rej_remark = :remark,
+                 remarkbyactacoutteam = :remark,
+                 porequestApprovalId = :approvedBy
+             WHERE po_transaction = :po
+               AND po_part_no = :component_key
+               AND company_branch = :branch`,
+            {
+              replacements: {
+                approvedBy: req.logedINUser,
+                remark: finalRemark,
+                po: po_transaction,
+                component_key,
+                branch: req.branch,
+              },
+              type: invtDB.QueryTypes.UPDATE,
+              transaction: t,
+            }
+          );
         }
-        logRemark = `Components approved: ${approvedComponents.map(c => c.component_key).join(", ")}. ${logRemark}`;
       }
 
-     
-      if (rateMismatchComponents.length > 0 && hasFinalLevelPermission && currentStatusForPORequest === 'UV') {
+      // Log entry
+      let logStatus = hasRejection
+        ? rejectedComponents.length === components.length
+          ? "FULLY REJECTED"
+          : "PARTIALLY REJECTED"
+        : "APPROVED";
+
+      let logRemark = remark || "--";
+      if (hasRejection) {
+        logRemark = `Components rejected: ${rejectedComponents.map((c) => c.component_key).join(", ")}. ${logRemark}`;
+      } else {
+        logRemark = `Components approved: ${approvedComponents.map((c) => c.component_key).join(", ")}. ${logRemark}`;
+      }
+      if (rateMismatchComponents.length > 0) {
         logRemark += ` | Rate Mismatch Override by ${req.logedINUser}`;
       }
 
       await invtDB.query(
-        `INSERT INTO po_status_log 
-         (po_id, po_log_status, po_log_remark, insert_dt, insert_time, insert_by) 
+        `INSERT INTO po_status_log
+         (po_id, po_log_status, po_log_remark, insert_dt, insert_time, insert_by)
          VALUES (:poid, :status, :remark, :insert_dt, :insert_time, :insert_by)`,
         {
           replacements: {
@@ -5797,42 +5662,30 @@ router.post(
 
       await t.commit();
 
-      // **EMAIL NOTIFICATION for rejections**
+      // Email on rejection
       if (hasRejection && poCreatorEmail) {
         const rejectedList = rejectedComponents
-          .map((c) => {
-            return `- Component: ${c.component_key} → Rejected ${
-              c.remark ? `(Remark: ${c.remark})` : ""
-            }`;
-          })
+          .map((c) => `- Component: ${c.component_key} → Rejected${c.remark ? ` (Remark: ${c.remark})` : ""}`)
           .join("<br>");
-
-        const globalRemark = remark
-          ? `<br><br><b>General Remark:</b> ${remark}`
-          : "";
 
         const mail_subject = `PO #${po_transaction} - Component(s) Rejected`;
         const mail_body = `
             <p>Dear ${poCreatorName},</p>
             <p>Your PO <strong>#${po_transaction}</strong> has been reviewed.</p>
             <p><strong>Status:</strong> <span style="color:red;">Some components have been REJECTED</span></p>
-
             <hr>
             <p><b>Rejected Components:</b><br>${rejectedList}</p>
-            ${globalRemark}
+            ${remark ? `<p><b>Remark:</b> ${remark}</p>` : ""}
             <hr>
-
             <p>Please review and resubmit with correct information.</p>
-            <p><a href="https://oakter.mscorpres.co.in/approval-po">Click here to view PO</a></p>
-            <br>
+            <p><a href="${process.env.WEB_URL}/approval-po">Click here to view PO</a></p>
             <p>Thank you,<br>Approval Team</p>
           `;
-
         helper.sendMail(poCreatorEmail, null, mail_subject, mail_body, null);
       }
 
-      // **EMAIL NOTIFICATION for final approval**
-      if (hasApproval && hasFinalLevelPermission && currentStatusForPORequest === 'UV' && poCreatorEmail) {
+      // Email on approval
+      if (hasApproval && poCreatorEmail) {
         const mailSubject = `PO APPROVED [REF ${po_transaction}]`;
         const mailMsg = `<div style="font-family: Roboto,sans-serif;">
                           <p>Hi ${poCreatorName},</p>
@@ -5841,38 +5694,19 @@ router.post(
                         </div>`;
 
         let file = {
-          url:
-            `${process.env.API_URL}/helper/PRINT/PHP/PO/alwar-printReceipt.php?invoice=${Buffer.from(po_transaction).toString("base64")}`,
+          url: `${process.env.API_URL}/helper/PRINT/PHP/PO/printReceipt.php?invoice=${Buffer.from(po_transaction).toString("base64")}`,
         };
-        let options = { format: "A4" };
-        
+
         html_to_pdf
-          .generatePdf(file, options)
+          .generatePdf(file, { format: "A4" })
           .then((pdfBuffer) => {
             helper.sendMail(poCreatorEmail, null, mailSubject, mailMsg, [
-              { filename: "POFILE.pdf", content: pdfBuffer }
+              { filename: "POFILE.pdf", content: pdfBuffer },
             ]);
           })
           .catch((err) => {
             helper.errorMAil(err, mailSubject, err.stack, null);
           });
-      }
-
-      // Determine next status and approval level
-      let nextStatusForPORequest = "";
-      let approvalLevel = "";
-
-      if (hasRejection) {
-        nextStatusForPORequest = "Pending (N)";
-        approvalLevel = "Rejected - Sent back for correction";
-      } else if (hasApproval) {
-        if (currentStatusForPORequest === 'UV' && hasFinalLevelPermission) {
-          nextStatusForPORequest = "Approved (A)";
-          approvalLevel = "Final Approval - Completed";
-        } else if (currentStatusForPORequest === 'N' || currentStatusForPORequest === null || currentStatusForPORequest === '') {
-          nextStatusForPORequest = "Under Verification (UV)";
-          approvalLevel = "First Level Approval - Sent for Final Review";
-        }
       }
 
       return res.json({
@@ -5881,23 +5715,9 @@ router.post(
         message: "PO components updated successfully",
         data: {
           po_transaction,
-          updated: components.length,
-          action: hasRejection
-            ? rejectedComponents.length === components.length
-              ? "Fully Rejected"
-              : "Partially Rejected"
-            : "Approved",
-          approval_level: approvalLevel,
-          previous_statusforporequest: currentStatusForPORequest,
-          new_statusforporequest: nextStatusForPORequest,
-          approval_status_updated: hasFinalLevelPermission && currentStatusForPORequest === 'UV' && hasApproval ? "Yes" : "No",
+          approved: approvedComponents.length,
+          rejected: rejectedComponents.length,
           rate_mismatch_info: rateMismatchComponents.length > 0 ? rateMismatchComponents : null,
-          user_info: {
-            team_name: userInfo.team_name,
-            role: userInfo.role,
-            first_level_permission: hasFirstLevelPermission,
-            final_level_permission: hasFinalLevelPermission
-          }
         },
       });
     } catch (err) {

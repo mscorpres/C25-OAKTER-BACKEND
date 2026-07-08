@@ -340,190 +340,159 @@ router.post(
   }
 );
 
-router.post(
-  "/poMINImport",
-  [auth.isAuthorized, auth.checkDuplicacy_db],
-  async (req, res) => {
-    const validation = new Validator(req.body, {
-      poid: "required",
-      invoice: "required",
-    });
+router.post("/poMINImport", [auth.isAuthorized, auth.checkDuplicacy_db], async (req, res) => {
+  const validation = new Validator(req.body, {
+    poid: "required",
+    invoice: "required",
+  });
 
-    if (validation.fails()) {
-      res.json({
-        status: "error",
-        success: false,
-        message: "something you missing in form field to supply",
-        data: validation.errors.all(),
-      });
+  if (validation.fails()) {
+    res.json({ success: false, message: "something you missing in form field to supply", data: validation.errors.all(), status: "error" });
+    return;
+  }
+  let itemLength = req.body.component.length;
+  for (let i = 0; i < itemLength; i++) {
+    let itemValidation = new Validator(
+      {
+        item: req.body.component[i],
+        qty: req.body.qty[i],
+        rate: req.body.rate[i],
+        finalRate: req.body.finalRate[i],
+        exchangeCurr: req.body.currency,
+        customDuty: req.body.customDuty[i],
+        freight: req.body.freight[i],
+      },
+      {
+        item: "required",
+        qty: "required|not_in:0",
+        rate: "required",
+        finalRate: "required",
+        exchangeCurr: "required",
+        customDuty: "required",
+        freight: "required",
+      }
+    );
+    if (itemValidation.fails()) {
+      res.json({ success: false, message: helper.firstErrorValidatorjs(itemValidation), status: "error" });
       return;
     }
-    let itemLength = req.body.component.length;
-    for (let i = 0; i < itemLength; i++) {
-      let itemValidation = new Validator(
-        {
-          item: req.body.component[i],
-          qty: req.body.qty[i],
-          rate: req.body.rate[i],
-          finalRate: req.body.finalRate[i],
-          exchangeCurr: req.body.currency,
-          customDuty: req.body.customDuty[i],
-          freight: req.body.freight[i],
-        },
-        {
-          item: "required",
-          qty: "required|not_in:0",
-          rate: "required",
-          finalRate: "required",
-          exchangeCurr: "required",
-          customDuty: "required",
-          freight: "required",
-        }
-      );
-      if (itemValidation.fails()) {
-        res.json({
-          status: "error",
-          success: false,
-          message: helper.firstErrorValidatorjs(itemValidation),
-        });
-        return;
+  }
+
+  const t = await invtDB.transaction();
+  let out_txn_no = helper.getUniqueNumber(); //Transaction OUT ID
+  try {
+    // CHECK COMPONENTs
+    const checkPartCode = await invtDB.query("SELECT c_part_no , c_name , component_key FROM components WHERE component_key IN (:part_code) ", {
+      replacements: { part_code: req.body.component },
+      type: invtDB.QueryTypes.SELECT,
+    });
+
+    if (checkPartCode.length <= 0) {
+      t.rollback();
+      return res.json({ success: false, message: "Part code not found", status: "error" });
+    }
+
+    if (checkPartCode.length != req.body.component.length) {
+      const notFoundPartInDb = req.body.component.filter((item) => !checkPartCode.map((part) => part.component_key).includes(item));
+
+      if (notFoundPartInDb.length > 0) {
+        t.rollback();
+        return res.json({ success: false, message: "Part code not found ( " + notFoundPartInDb.join(", ") + " )", status: "error" });
       }
     }
 
-    const t = await invtDB.transaction();
-    let out_txn_no = helper.getUniqueNumber(); //Transaction OUT ID
-    try {
-      // CHECK COMPONENTs
-      const checkPartCode = await invtDB.query(
-        "SELECT c_part_no , c_name , component_key FROM components WHERE component_key IN (:part_code) ",
-        {
-          replacements: { part_code: req.body.component },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+    let stmt1 = await invtDB.query("SELECT `branch_code` FROM `branches` WHERE `branch_code` = :branchcode", {
+      replacements: {
+        branchcode: req.branch,
+        status: "C",
+      },
+      type: invtDB.QueryTypes.SELECT,
+      transaction: t,
+    });
 
-      if (checkPartCode.length <= 0) {
+    if (stmt1.length > 0 || 1) {
+      let in_txn_no;
+      let stmt2 = await invtDB.query("SELECT * FROM `ims_numbering` WHERE `for_number` = 'MIN' FOR UPDATE", { transaction: t, type: invtDB.QueryTypes.SELECT });
+
+      if (stmt2.length > 0) {
+        var suffix = stmt2[0].suffix;
+        suffix = parseInt(suffix) + 1;
+        suffix = suffix.toString();
+        suffix = suffix.padStart(parseInt(stmt2[0].number_length_limit), "0");
+        in_txn_no = stmt2[0].prefix + "/" + stmt2[0].session + "/" + suffix;
+      } else {
+        let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
+        in_txn_no = "MIN/" + currYear + "-" + (currYear + 1) + "/0001";
+      }
+      await invtDB.query("UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number` = 'MIN'", { transaction: t, type: invtDB.QueryTypes.UPDATE });
+
+      let insert_dt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
+
+      let get_transaction_id = await invtDB.query("SELECT `transaction_id` FROM `transaction_ids` WHERE `transaction_id` = :transaction_id LIMIT 1", {
+        replacements: { transaction_id: in_txn_no },
+        transaction: t,
+        type: invtDB.QueryTypes.SELECT,
+      });
+      if (get_transaction_id.length > 0) {
         t.rollback();
-        return res.json({
-          status: "error",
+        res.json({
           success: false,
-          message: "Part code not found",
+          message: "alloting transaction id as [" + in_txn_no + "] for MIN has already mapped, required manual checking or contact to system administrator.",
+          status: "error",
         });
-      }
-
-      if (checkPartCode.length != req.body.component.length) {
-        const notFoundPartInDb = req.body.component.filter(
-          (item) =>
-            !checkPartCode.map((part) => part.component_key).includes(item)
-        );
-
-        if (notFoundPartInDb.length > 0) {
-          t.rollback();
-          return res.json({
-            status: "error",
-            success: false,
-            message:
-              "Part code not found ( " + notFoundPartInDb.join(", ") + " )",
-          });
-        }
-      }
-
-      let stmt1 = await invtDB.query(
-        "SELECT `branch_code` FROM `branches` WHERE `branch_code` = :branchcode",
-        {
-          replacements: {
-            branchcode: req.branch,
-            status: "C",
-          },
+        return;
+      } else {
+        let stmt3 = await invtDB.query("SELECT * FROM `po_purchase_req` WHERE `po_transaction` = :po_transaction AND `company_branch` = :branch", {
+          replacements: { po_transaction: req.body.poid, branch: req.branch },
           type: invtDB.QueryTypes.SELECT,
-          transaction: t,
-        }
-      );
-
-      if (stmt1.length > 0 || 1) {
-        let in_txn_no = await helper.genTransaction("MIN", t); //Transaction IN ID
-        let insert_dt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
-
-        let stmt3 = await invtDB.query(
-          "SELECT * FROM `po_purchase_req` WHERE `po_transaction` = :po_transaction AND `company_branch` = :branch",
-          {
-            replacements: {
-              po_transaction: req.body.poid,
-              branch: req.branch,
-            },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
+        });
         if (stmt3.length > 0) {
-          let checkVendor = await invtDB.query(
-            "SELECT * FROM `ven_basic_detail` WHERE `ven_register_id` = :vendor_id",
-            {
-              replacements: { vendor_id: stmt3[0].po_vendor_reg_id },
-              type: invtDB.QueryTypes.SELECT,
-            }
-          );
+          let checkVendor = await invtDB.query("SELECT * FROM `ven_basic_detail` WHERE `ven_register_id` = :vendor_id", {
+            replacements: { vendor_id: stmt3[0].po_vendor_reg_id },
+            type: invtDB.QueryTypes.SELECT,
+          });
 
           if (checkVendor.length == 0) {
             t.rollback();
-            res.json({
-              status: "error",
-              success: false,
-              message: "Vendor not found",
-            });
+            res.json({ success: false, message: "Vendor not found", status: "warning" });
             return;
           }
 
+          /* if (checkVendor[0].ven_einvoice_status == 'Y' && (req.body.irn === '' || req.body.irn.length !== 15)) {
+            t.rollback();
+            res.json({ success: false, message: { msg: "Please enter valid Acknowledgement number" }, status: "warning" });
+            return;
+          } */
+
           for (let i = 0; i < itemLength; i++) {
             if (req.body.invoice !== "") {
-              if (
-                req.body.invoiceDate == "" &&
-                !helper.preg_match(
-                  /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
-                  req.body.invoiceDate
-                )
-              ) {
+              if (req.body.invoiceDate == "" && !helper.preg_match(/^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/, req.body.invoiceDate)) {
                 t.rollback();
-                res.json({
-                  status: "error",
-                  success: false,
-                  message:
-                    "Pls recheck the invoice date, It should be in 'DD-MM-YYYY' format OR would not be empty",
-                });
+                res.json({ success: false, message: "Pls recheck the invoice date, It should be in 'DD-MM-YYYY' format OR would not be empty", status: "error" });
                 return;
               }
 
               if (req.body.location == "0") {
                 t.rollback();
                 res.json({
+                  success: false,
                   message: "you might left some location to select",
                   status: "error",
-                  success: false,
                 });
                 return;
               }
 
-              let stmt6 = await invtDB.query(
-                "SELECT `currency_id` FROM `ims_currency` WHERE `currency_id`  = :currency",
-                {
-                  replacements: { currency: req.body.currency },
-                  type: invtDB.QueryTypes.SELECT,
-                  transaction: t,
-                }
-              );
+              let stmt6 = await invtDB.query("SELECT `currency_id` FROM `ims_currency` WHERE `currency_id`  = :currency", {
+                replacements: { currency: req.body.currency },
+                type: invtDB.QueryTypes.SELECT,
+                transaction: t,
+              });
               if (stmt6.length > 0) {
-                if (
-                  req.body.qty[i] !== "" &&
-                  req.body.qty[i] !== "0" &&
-                  req.body.invoice[i] !== ""
-                ) {
+                if (req.body.qty[i] !== "" && req.body.qty[i] !== "0" && req.body.invoice[i] !== "") {
                   let stmt7 = await invtDB.query(
                     "SELECT COALESCE(SUM(`qty`+`other_qty`), 0) AS `totalIN_QTY` FROM `rm_location` WHERE `components_id` = :component AND `in_po_transaction_id` = :po_transaction_id AND `trans_type` = 'INWARD' AND `company_branch` = :branch",
                     {
-                      replacements: {
-                        component: req.body.component[i],
-                        po_transaction_id: req.body.poid,
-                        branch: req.branch,
-                      },
+                      replacements: { component: req.body.component[i], po_transaction_id: req.body.poid, branch: req.branch },
                       type: invtDB.QueryTypes.SELECT,
                     }
                   );
@@ -538,85 +507,41 @@ router.post(
                   let stmt8 = await invtDB.query(
                     "SELECT * FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` WHERE `po_purchase_req`.`po_part_status` = 'ACTIVE' AND `po_purchase_req`.`po_transaction` = :po_transaction_id AND `po_purchase_req`.`po_part_no` = :component AND `po_purchase_req`.`company_branch` = :branch",
                     {
-                      replacements: {
-                        po_transaction_id: req.body.poid,
-                        component: req.body.component[i],
-                        branch: req.branch,
-                      },
+                      replacements: { po_transaction_id: req.body.poid, component: req.body.component[i], branch: req.branch },
                       type: invtDB.QueryTypes.SELECT,
                     }
                   );
                   if (stmt8.length > 0) {
-                    if (
-                      helper.number(stmt8[0].po_order_qty) >=
-                      helper.number(
-                        totalInward + helper.number(req.body.qty[i])
-                      )
-                    ) {
+                    if (helper.number(stmt8[0].po_order_qty) >= helper.number(totalInward + helper.number(req.body.qty[i]))) {
                       if (req.body.location == "") {
                         t.rollback();
-                        res.json({
-                          status: "error",
-                          success: false,
-                          message:
-                            "supply the valid inwarding location for MIN partcode " +
-                            stmt8[0].c_part_no,
-                        });
+                        res.json({ success: false, message: "supply the valid inwarding location for MIN partcode " + stmt8[0].c_part_no, status: "error" });
                         return;
                       }
                       if (req.body.invoice[i] == "") {
                         t.rollback();
-                        res.json({
-                          status: "error",
-                          success: false,
-                          message:
-                            "supply the valid Invoice ID for MIN partcode " +
-                            stmt8[0].c_part_no,
-                        });
+                        res.json({ success: false, message: "supply the valid Invoice ID for MIN partcode " + stmt8[0].c_part_no, status: "error" });
                         return;
                       }
                       if (req.body.qty[i] < 0) {
                         t.rollback();
-                        res.json({
-                          status: "error",
-                          success: false,
-                          message:
-                            "MIN quantity couldn't be in negative for MIN partcode " +
-                            stmt8[0].c_part_no,
-                        });
+                        res.json({ success: false, message: "MIN quantity couldn't be in negative for MIN partcode " + stmt8[0].c_part_no, status: "error" });
                         return;
                       }
                       if (req.body.hsncode[i] == "") {
                         t.rollback();
-                        res.json({
-                          status: "error",
-                          success: false,
-                          message:
-                            "HSN code is mandatory to supply for MIN partcode " +
-                            stmt8[0].c_part_no,
-                        });
+                        res.json({ success: false, message: "HSN code is mandatory to supply for MIN partcode " + stmt8[0].c_part_no, status: "error" });
                         return;
                       }
-                      let stmt9 = await invtDB.query(
-                        "UPDATE `components` SET `c_hsn` = :hsncode WHERE `component_key` = :component_key",
-                        {
-                          replacements: {
-                            hsncode: req.body.hsncode[i],
-                            component_key: req.body.component[i],
-                          },
-                          type: invtDB.QueryTypes.UPDATE,
-                          transaction: t,
-                        }
-                      );
+                      let stmt9 = await invtDB.query("UPDATE `components` SET `c_hsn` = :hsncode WHERE `component_key` = :component_key", {
+                        replacements: { hsncode: req.body.hsncode[i], component_key: req.body.component[i] },
+                        type: invtDB.QueryTypes.UPDATE,
+                        transaction: t,
+                      });
                       let stmt10 = await invtDB.query(
                         "UPDATE `po_purchase_req` SET `po_pending_qty` = po_pending_qty - :outward_qty, `po_inward_qty`= po_inward_qty + :inward_qty WHERE `po_part_no` = :components AND `po_transaction` = :po_id",
                         {
-                          replacements: {
-                            outward_qty: req.body.qty[i],
-                            inward_qty: req.body.qty[i],
-                            components: req.body.component[i],
-                            po_id: req.body.poid,
-                          },
+                          replacements: { outward_qty: req.body.qty[i], inward_qty: req.body.qty[i], components: req.body.component[i], po_id: req.body.poid },
                           type: invtDB.QueryTypes.UPDATE,
                           transaction: t,
                         }
@@ -625,25 +550,16 @@ router.post(
                       if (totalInward == 0) {
                         t.rollback();
                         res.json({
-                          message:
-                            totalInward +
-                            " MIN quantity should be less than to the total PO order quantity & the PO order quantity for partcode " +
-                            stmt8[0].c_part_no,
-                          status: "error",
                           success: false,
+                          message: totalInward + " MIN quantity should be less than to the total PO order quantity & the PO order quantity for partcode " + stmt8[0].c_part_no,
+                          status: "error",
                         });
                       } else {
                         t.rollback();
                         res.json({
-                          message:
-                            "MIN quantity should be less than to the total PO Order quantity & you have already inwarded [" +
-                            totalInward +
-                            "] QTY in partcode [" +
-                            stmt8[0].c_part_no +
-                            "]",
-
-                          status: "error",
                           success: false,
+                          message: "MIN quantity should be less than to the total PO Order quantity & you have already inwarded [" + totalInward + "] QTY in partcode [" + stmt8[0].c_part_no + "]",
+                          status: "error",
                         });
                       }
                     }
@@ -651,11 +567,7 @@ router.post(
                 }
               } else {
                 t.rollback();
-                res.json({
-                  status: "error",
-                  success: false,
-                  message: "currency either inactive or not exist with us",
-                });
+                res.json({ success: false, message: "currency either inactive or not exist with us", status: "error" });
                 return;
               }
 
@@ -670,27 +582,20 @@ router.post(
                     ven_branch: stmt3[0].po_ven_add_id,
                     branch: req.branch,
                     currency: req.body.currency,
-                    exchange:
-                      req.body.currency == "364907247"
-                        ? 1
-                        : req.body.exchange[i],
+                    exchange: req.body.currency == "364907247" ? 1 : req.body.exchange[i],
                     cgst: 0,
                     sgst: 0,
                     igst: 0,
                     hsncode: req.body.hsncode[i],
                     vendor_type: stmt3[0].po_vendor_type,
                     component: req.body.component[i],
-                    po_rate:
-                      req.body.currency == "364907247"
-                        ? Number(req.body.rate[i])
-                        : Number(req.body.rate[i]),
+                    po_rate: req.body.currency == "364907247" ? Number(req.body.rate[i]) : Number(req.body.rate[i]),
                     final_rate: req.body.finalRate[i],
                     custom_duty: req.body.customDuty[i],
                     freight: req.body.freight[i],
                     qty: req.body.qty[i],
                     location_in: req.body.location,
-                    remark:
-                      req.body.remark[i] == "" ? "--" : req.body.remark[i],
+                    remark: req.body.remark[i] == "" ? "--" : req.body.remark[i],
                     insertdate: insert_dt,
                     insertby: req.logedINUser,
                     in_transaction_id: in_txn_no,
@@ -715,206 +620,215 @@ router.post(
           let arr = str.split(",");
           let fileLength = arr.length;
           for (let i = 0; i < fileLength; i++) {
-            let insert_date = moment(new Date())
-              .tz("Asia/Kolkata")
-              .format("YYYY-MM-DD HH:mm:ss");
-            let insert_res_2 = await invtDB.query(
-              "INSERT INTO `ims_min_invoices` (`min_inv_file`, `min_inv_by`, `min_inv_dt`, `min_min_id`) VALUES(:fileurl, :invby, :invdate, :minid)",
+            let insert_date = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+            let insert_res_2 = await invtDB.query("INSERT INTO `ims_min_invoices` (`min_inv_file`, `min_inv_by`, `min_inv_dt`, `min_min_id`) VALUES(:fileurl, :invby, :invdate, :minid)", {
+              replacements: {
+                fileurl: arr[i],
+                invby: req.logedINUser,
+                invdate: insert_date,
+                minid: in_txn_no,
+              },
+              type: invtDB.QueryTypes.INSERT,
+              transaction: t,
+            });
+          }
+
+          //
+          let finalCheck = await invtDB.query(
+            "INSERT INTO transaction_ids (transaction_id, module_type) SELECT * FROM (SELECT :txn, 'MIN-PO') AS tmp WHERE NOT EXISTS ( SELECT transaction_id FROM transaction_ids WHERE transaction_id = :txn ) LIMIT 1",
+            {
+              replacements: { txn: in_txn_no },
+              type: invtDB.QueryTypes.INSERT,
+              transaction: t,
+            }
+          );
+          if (finalCheck.length > 0) {
+            let po_log = await invtDB.query(
+              "INSERT INTO `po_status_log`(`po_id`, `min_no`, `po_log_status`, `insert_dt`, `insert_time`, `insert_by`) VALUES ( :poid, :minno, :status, :insert_dt, :insert_time, :insert_by )",
               {
                 replacements: {
-                  fileurl: arr[i],
-                  invby: req.logedINUser,
-                  invdate: insert_date,
-                  minid: in_txn_no,
+                  poid: req.body.poid,
+                  minno: in_txn_no,
+                  status: "--",
+                  insert_dt: moment(new Date()).format("YYYY-MM-DD"),
+                  insert_time: moment(new Date()).format("HH:mm:ss"),
+                  insert_by: req.logedINUser,
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction: t,
               }
             );
-          }
+            await t.commit();
+            // Integrated API logic
+            let payload = { Data: [] };
+            let apiStatus = null;
+            let externalResult;
+            try {
+              const data = [];
+              const itemLength = req.body.component?.length || 0;
 
-          let po_log = await invtDB.query(
-            "INSERT INTO `po_status_log`(`po_id`, `min_no`, `po_log_status`, `insert_dt`, `insert_time`, `insert_by`) VALUES ( :poid, :minno, :status, :insert_dt, :insert_time, :insert_by )",
-            {
-              replacements: {
-                poid: req.body.poid,
-                minno: in_txn_no,
-                status: "--",
-                insert_dt: moment(new Date()).format("YYYY-MM-DD"),
-                insert_time: moment(new Date()).format("HH:mm:ss"),
-                insert_by: req.logedINUser,
-              },
-              type: invtDB.QueryTypes.INSERT,
-              transaction: t,
-            }
-          );
-          await t.commit();
-          // Integrated API logic
-          let payload = { Data: [] };
-          let apiStatus = null;
-          let externalResult;
-          try {
-            const data = [];
-            const itemLength = req.body.component?.length || 0;
+              for (let i = 0; i < itemLength; i++) {
+                let partCodeName = '';
+                let partname = '';
+                if (req.body.component[i]) {
+                  const componentResult = await invtDB.query(
+                    "SELECT c_part_no, c_name FROM `components` WHERE `component_key` = :partCode LIMIT 1",
+                    {
+                      replacements: { partCode: req.body.component[i] },
+                      type: invtDB.QueryTypes.SELECT,
+                    }
+                  );
+                  partCodeName = componentResult.length > 0 ? componentResult[0].c_part_no : '';
+                  partname = componentResult.length > 0 ? componentResult[0].c_name : '';
+                }
 
-            for (let i = 0; i < itemLength; i++) {
-              let partCodeName = "";
-              let partname = "";
-              if (req.body.component[i]) {
-                const componentResult = await invtDB.query(
-                  "SELECT c_part_no, c_name FROM `components` WHERE `component_key` = :partCode LIMIT 1",
+                data.push({
+                  PARTCode: partCodeName,
+                  PARTCodeName: partname,
+                  VendorName: stmt3[0].po_vendor_reg_id || '--',
+                  InvoiceDate: req.body.invoiceDate  || moment(insert_dt).format('YYYY/MM/DD HH:mm:ss'),
+                  MinNumber: in_txn_no,
+                  UNIT: isNaN(parseInt(req.body.qty[i])) ? 0 : parseInt(req.body.qty[i]),
+                  Rate: isNaN(parseFloat(req.body.rate[i])) ? 0 : parseFloat(req.body.rate[i]),
+                  MINDate: moment(insert_dt).format('YYYY/MM/DD HH:mm:ss'),
+                });
+              }
+
+              payload = { Data: data };
+
+              console.log('Payload for external API:', JSON.stringify(payload, null, 2));
+
+              if (process.env.STAGE === "PROD") {
+                const response = await axios.post(
+                  'http://dev.oakter.co:84/Oakter/Report/SaveComponentInwardData',
+                  payload,
                   {
-                    replacements: { partCode: req.body.component[i] },
-                    type: invtDB.QueryTypes.SELECT,
+                    headers: { 'Content-Type': 'application/json' },
                   }
                 );
-                partCodeName =
-                  componentResult.length > 0
-                    ? componentResult[0].c_part_no
-                    : "";
-                partname =
-                  componentResult.length > 0 ? componentResult[0].c_name : "";
-              }
 
-              data.push({
-                PARTCode: partCodeName,
-                PARTCodeName: partname,
-                VendorName: stmt3[0].po_vendor_reg_id || "--",
-                InvoiceDate:
-                  req.body.invoiceDate ||
-                  moment(insert_dt).format("YYYY/MM/DD HH:mm:ss"),
-                MinNumber: in_txn_no,
-                UNIT: isNaN(parseInt(req.body.qty[i]))
-                  ? 0
-                  : parseInt(req.body.qty[i]),
-                Rate: isNaN(parseFloat(req.body.rate[i]))
-                  ? 0
-                  : parseFloat(req.body.rate[i]),
-                MINDate: moment(insert_dt).format("YYYY/MM/DD HH:mm:ss"),
+                console.log('API Response:', response.data);
+
+                apiStatus = response.data.OverAllStatus === 'PASS' ? 'PASS' : 'FAIL';
+
+                try {
+                  await invtDB.query(
+                    "INSERT INTO api_payload_log (min_number, api_status, payload, log_dt) VALUES (:minNumber, :apiStatus, :payload, :log_dt)",
+                    {
+                      replacements: {
+                        minNumber: in_txn_no,
+                        apiStatus: apiStatus,
+                        payload: JSON.stringify(payload),
+                        log_dt: moment(insert_dt).format('YYYY-MM-DD HH:mm:ss'),
+                      },
+                      type: invtDB.QueryTypes.INSERT,
+                    }
+                  );
+                } catch (dbError) {
+                  console.error('Failed to log payload to api_payload_log:', dbError.message);
+                }
+
+                externalResult = {
+                  status: apiStatus,
+                  message: apiStatus === 'PASS' ? 'External API call successful' : `External API call failed: ${response.data.Status.join(', ')}`,
+                  details: response.data.Status,
+                };
+              } else {
+                apiStatus = 'SKIPPED';
+                externalResult = {
+                  status: 'SKIPPED',
+                  message: 'External API call skipped (UAT/DEV environment)',
+                  details: null,
+                };
+
+                console.log('[UAT/DEV] Skipping external API call. Payload would be:', JSON.stringify(payload, null, 2));
+
+                try {
+                  await invtDB.query(
+                    "INSERT INTO api_payload_log (min_number, api_status, payload, log_dt) VALUES (:minNumber, :apiStatus, :payload, :log_dt)",
+                    {
+                      replacements: {
+                        minNumber: in_txn_no,
+                        apiStatus: apiStatus,
+                        payload: JSON.stringify(payload),
+                        log_dt: moment(insert_dt).format('YYYY-MM-DD HH:mm:ss'),
+                      },
+                      type: invtDB.QueryTypes.INSERT,
+                    }
+                  );
+                } catch (dbError) {
+                  console.error('Failed to log payload to api_payload_log:', dbError.message);
+                }
+              }
+            } catch (error) {
+              console.error('External API Error:', {
+                message: error.message,
+                response: error.response ? {
+                  status: error.response.status,
+                  data: error.response.data,
+                } : 'No response data',
               });
-            }
 
-            payload = { Data: data };
+              apiStatus = 'ERROR';
 
-            const response = await axios.post(
-              "http://dev.oakter.co:84/Oakter/Report/SaveComponentInwardData",
-              payload,
-              {
-                headers: { "Content-Type": "application/json" },
+              try {
+                await invtDB.query(
+                  "INSERT INTO api_payload_log (min_number, api_status, payload, log_dt) VALUES (:minNumber, :apiStatus, :payload, :log_dt)",
+                  {
+                    replacements: {
+                      minNumber: in_txn_no,
+                      apiStatus: apiStatus,
+                      payload: JSON.stringify(payload),
+                      log_dt: moment(insert_dt).format('YYYY-MM-DD HH:mm:ss'),
+                    },
+                    type: invtDB.QueryTypes.INSERT,
+                  }
+                );
+              } catch (dbError) {
+                console.error('Failed to log payload to api_payload_log:', dbError.message);
               }
-            );
 
-            console.log("API Response:", response.data);
-
-            apiStatus =
-              response.data.OverAllStatus === "PASS" ? "PASS" : "FAIL";
-
-            try {
-              await invtDB.query(
-                "INSERT INTO api_payload_log (min_number, api_status, payload, log_dt) VALUES (:minNumber, :apiStatus, :payload, :log_dt)",
-                {
-                  replacements: {
-                    minNumber: in_txn_no,
-                    apiStatus: apiStatus,
-                    payload: JSON.stringify(payload),
-                    log_dt: moment(insert_dt).format("YYYY-MM-DD HH:mm:ss"),
-                  },
-                  type: invtDB.QueryTypes.INSERT,
-                }
-              );
-            } catch (dbError) {
-              // console.error(
-              //   "Failed to log payload to api_payload_log:",
-              //   dbError.message
-              // );
+              externalResult = {
+                status: apiStatus,
+                message: `Failed to call external API: ${error.message}`,
+                details: error.response?.data || null,
+              };
             }
 
-            externalResult = {
-              status: apiStatus,
-              message:
-                apiStatus === "PASS"
-                  ? "External API call successful"
-                  : `External API call failed: ${response.data.Status.join(
-                      ", "
-                    )}`,
-              details: response.data.Status,
-            };
-          } catch (error) {
-            apiStatus = "ERROR";
-
-            try {
-              await invtDB.query(
-                "INSERT INTO api_payload_log (min_number, api_status, payload, log_dt) VALUES (:minNumber, :apiStatus, :payload, :log_dt)",
-                {
-                  replacements: {
-                    minNumber: in_txn_no,
-                    apiStatus: apiStatus,
-                    payload: JSON.stringify(payload),
-                    log_dt: moment(insert_dt).format("YYYY-MM-DD HH:mm:ss"),
-                  },
-                  type: invtDB.QueryTypes.INSERT,
-                }
-              );
-            } catch (dbError) {
-              // console.error(
-              //   "Failed to log payload to api_payload_log:",
-              //   dbError.message
-              // );
-            }
-
-            externalResult = {
-              status: apiStatus,
-              message: `Failed to call external API: ${error.message}`,
-              details: error.response?.data || null,
-            };
+            res.json({
+              success: true,
+              message: `PO Material-IN completed..!!! transaction ref ID. [#${in_txn_no}]`,
+              status: "success",
+              data: {
+                transaction_id: in_txn_no,
+                txn: in_txn_no,
+                externalStatus: externalResult.status,
+                externalDetails: externalResult.details,
+              },
+            });
+            return;
+          } else {
+            t.rollback();
+            res.json({ success: false, message: "transaction route seems to be really busy - Please try again...", status: "warning" });
+            return;
           }
-
-          res.json({
-            message: `PO Material-IN completed..!!! transaction ref ID. [#${in_txn_no}]`,
-            status: "success",
-            success: true,
-            transaction_id: in_txn_no,
-            data: {
-              txn: in_txn_no,
-              externalStatus: externalResult.status,
-              externalDetails: externalResult.details,
-            },
-          });
-          return;
-          // } else {
-          //   t.rollback();
-          //   res.json({
-          //     status: "error",
-          //     success: false,
-          //     message:
-          //       "transaction route seems to be really busy - Please try again...",
-          //   });
-          //   return;
-          // }
         } else {
           t.rollback();
-          res.json({
-            status: "error",
-            success: false,
-            message:
-              "MIN operation cancelled bcz it seem PO ID not exist in our records",
-          });
+          res.json({ success: false, message: "MIN operation cancelled bcz it seem PO ID not exist in our records", status: "error" });
           return;
         }
-        // }
-      } else {
-        t.rollback();
-        res.json({
-          status: "error",
-          success: false,
-          message: "You have selected an invalid company branch",
-        });
-        return;
       }
-    } catch (err) {
-      return helper.errorResponse(res, err);
+    } else {
+      t.rollback();
+      res.json({ success: false, status: "error", message: "You have selected an invalid company branch" });
+      return;
     }
+  } catch (err) {
+    t.rollback();
+    // console.log(err);
+    res.json({ success: false, message: "Internal Error!!! If this condition persists, contact your system administrator", status: "error", error: err.stack });
+    return;
   }
-);
+});
 
 module.exports = router;

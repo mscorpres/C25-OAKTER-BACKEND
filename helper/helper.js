@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require("uuid");
 const path = require("path");
 const axios = require("axios");
 const { validate } = require("deep-email-validator");
+const crypto = require("crypto");
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
@@ -850,6 +851,25 @@ exports.sendMediaWhatsapp = async function (to, fileName, link) {
   });
 };
 
+exports.generateTxnID = function (date = null, time = null, sku = null, randomNumber = null) {
+  const finalDate = date || moment().format("DDMMYYYY");
+  const finalTime = time || moment().format("HHmmss");
+  const finalSku = sku || "NA";
+  const finalRandom = randomNumber || crypto.randomBytes(4).toString("hex").toUpperCase();
+
+  const uniqueQR = `${finalDate}-${finalSku}-${finalRandom}-${finalTime}`;
+
+  const transactionId = crypto
+    .createHash("sha256")
+    .update(uniqueQR)
+    .digest("base64")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .substring(0, 10)
+    .toUpperCase();
+
+  return transactionId;
+};
+
 // Get GSTIN Details --- START
 let cachedToken = null;
 
@@ -964,3 +984,4 @@ exports.generateTxnSession = function () {
 
   return `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`;
 }
+

@@ -1433,7 +1433,40 @@ router.post(
       );
 
       if (stmt1.length > 0) {
-        let mfg_transaction = await helper.genTransaction("MFG", t1);
+         let mfg_transaction;
+        let getNumber = await invtDB.query(
+          "SELECT * FROM ims_numbering WHERE for_number = 'MFG' FOR UPDATE",
+          {
+            type: invtDB.QueryTypes.SELECT,
+            transaction: t1,
+          },
+        );
+
+        mfg_transaction = "";
+        if (getNumber.length > 0) {
+          var suffix = getNumber[0].suffix;
+          suffix = parseInt(suffix) + 1;
+          suffix = suffix.toString();
+          suffix = suffix.padStart(
+            parseInt(getNumber[0].number_length_limit),
+            "0",
+          );
+          mfg_transaction =
+            getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
+        } else {
+          let currYear = parseInt(
+            new Date().getFullYear().toString().substr(2, 2),
+          );
+          mfg_transaction = "MFG/" + currYear + "-" + (currYear + 1) + "/0001";
+        }
+
+        await invtDB.query(
+          "UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'MFG'",
+          {
+            type: invtDB.QueryTypes.UPDATE,
+            transaction: t1,
+          },
+        );
 
         let stmt3 = await invtDB.query(
           "SELECT * FROM `mfg_production_2` WHERE `mfg_ref_id` = :ppr AND `mfg_sku` = :sku ORDER BY ID DESC LIMIT 1",
@@ -1477,9 +1510,10 @@ router.post(
           .format("YYYY-MM-DD HH:mm:ss");
 
         let stmt5 = await invtDB.query(
-          "INSERT INTO `mfg_production_2` (`company_branch`,`mfg_prod_planing_qty`,`mfg_sku`,`mfg_send_location`,`mfg_con_location`,`mfg_comment`,`mfg_insert_date`,`mfg_full_date`,`mfg_approved_by`,`mfg_transaction`,`mfg_ref_id`,`step_count`,`mfg_prod_type`,`mfg_ppr_created_by`) VALUES (:branch,:mfgqty,:sku,:sendLoc,:conLoc,:comment,:insertdate,:fulldate,:by,:transaction,:ppr,:count,:type,:pprinsertedby)",
+          "INSERT INTO `mfg_production_2` (`txn_session`,`company_branch`,`mfg_prod_planing_qty`,`mfg_sku`,`mfg_send_location`,`mfg_con_location`,`mfg_comment`,`mfg_insert_date`,`mfg_full_date`,`mfg_approved_by`,`mfg_transaction`,`mfg_ref_id`,`step_count`,`mfg_prod_type`,`mfg_ppr_created_by`) VALUES (:txn_session,:branch,:mfgqty,:sku,:sendLoc,:conLoc,:comment,:insertdate,:fulldate,:by,:transaction,:ppr,:count,:type,:pprinsertedby)",
           {
             replacements: {
+              txn_session: helper.generateTxnSession(),
               branch: req.branch,
               mfgqty: req.body.mfg_qty,
               sku: stmt1[0].prod_product_sku,
@@ -1568,13 +1602,15 @@ router.post(
               }
 
               let comp_stmt = await invtDB.query(
-                "INSERT INTO `rm_location` (`company_branch`,`trans_type`,`components_id`,`qty`,`other_qty` , mfg_bom_qty ,`loc_out`,`insert_date`,`insert_by`,`mfg_ppr_trans_id_1`,`mfg_ppr_trans_id_2`,`mfg_step_count`,`bom_subject_id`,`any_remark`,`in_po_rate`) VALUES(:branch, 'CONSUMPTION', :component, :qty, :other_qty, :bom_qty, :loc_out, :insert_date, :insert_by, :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark, :weighted_rate)",
+                "INSERT INTO `rm_location` (txn_session,`company_branch`,`trans_type`,`components_id`,`qty`,`other_qty` ,`in_po_rate`, mfg_bom_qty ,`loc_out`,`insert_date`,`insert_by`,`mfg_ppr_trans_id_1`,`mfg_ppr_trans_id_2`,`mfg_step_count`,`bom_subject_id`,`any_remark`) VALUES(:txn_session,:branch, 'CONSUMPTION', :component, :qty, :other_qty,:rate, :bom_qty, :loc_out, :insert_date, :insert_by, :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark)",
                 {
                   replacements: {
+                    txn_session: helper.generateTxnSession(),
                     branch: req.branch,
                     component: req.body.component[i],
                     qty: req.body.con_qty[i],
                     other_qty: req.body.reject[i],
+                    rate: req.body.rate[i],
                     bom_qty: stmt_bom_qty[0].qty,
                     loc_out: req.body.sending_location,
                     insert_date: insertDate,
@@ -1584,7 +1620,7 @@ router.post(
                     step_count: stepcount,
                     subject: stmt1[0].prod_bom_subject,
                     remark: req.body.remark[i],
-                    weighted_rate: componentWeightedRate,
+                    // weighted_rate: componentWeightedRate,
                   },
                   type: invtDB.QueryTypes.INSERT,
                   transaction: t1,
@@ -1764,6 +1800,7 @@ router.post(
         });
       }
     } catch (err) {
+      console.log(err);
       return helper.errorResponse(res, err);
     }
   }

@@ -935,7 +935,7 @@ router.post(
                 component: req.body.component[i],
                 location_in: req.body.location[i],
                 qty: req.body.qty[i],
-                insertdate: insert_dt,
+                insertdate: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
                 insertby: req.logedINUser,
                 transaction_id: in_txn_no,
                 invoice_id:
@@ -972,8 +972,23 @@ router.post(
           );
           // Auto Consump
           if (req.body.out_location[i] !== 0) {
+             const { rate: existingWAR, qty: existingQty } =
+              await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRateWithStock(
+                req.body.component[i],
+              );
+
+            const thisQty = helper.number(req.body.qty[i]);
+            const thisRate = helper.number(req.body.rate[i]);
+            const totalQty = existingQty + thisQty;
+
+            const autoConsumpRate = parseFloat(
+              (totalQty > 0
+                ? (existingQty * existingWAR + thisQty * thisRate) / totalQty
+                : thisRate
+              ).toFixed(10),
+            );
             let stmt4 = await invtDB.query(
-              "INSERT INTO `rm_location` (`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`in_transaction_id`,`out_transaction_id`,`is_auto_cons`,`any_remark`)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:indate,:inby,:in_transaction_id,:out_transaction_id,'Y',:comment)",
+              "INSERT INTO `rm_location` (`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`in_transaction_id`,`out_transaction_id`,`is_auto_cons`,`any_remark`,in_po_rate)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:indate,:inby,:in_transaction_id,:out_transaction_id,'Y',:comment, :in_po_rate)",
               {
                 replacements: {
                   branch: req.branch,
@@ -987,6 +1002,7 @@ router.post(
                   in_transaction_id: in_txn_no,
                   out_transaction_id: out_txn_no,
                   comment: req.body.remark[i] == "" ? "--" : req.body.remark[i],
+                  in_po_rate: autoConsumpRate
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction: t,
