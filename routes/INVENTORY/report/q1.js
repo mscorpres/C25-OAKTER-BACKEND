@@ -309,6 +309,7 @@ router.get("/view", [auth.isAuthorized], async (req, res) => {
         }
 
         return {
+          rmLocationId: item.rm_id,
           serialNo: offset + index + 1,
 
           vendorType,

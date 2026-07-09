@@ -362,45 +362,121 @@ router.get("/fetch_loc_all", [auth.isAuthorized], async (req, res) => {
 });
 
 // FETCH LOCATION ALLOTED BY KEY
-router.post(
-  "/fetch_location_all_update",
-  [auth.isAuthorized],
-  async (req, res) => {
-    let validation = new Validator(req.body, {
-      key: "required",
-    });
+router.post("/fetch_location_all_update", async (req, res) => {
+  let validation = new Validator(req.body, {
+    key: "required",
+  });
 
-    if (validation.fails()) {
-      return res.json({
-        status: "error",
-        success: false,
-        message: helper.firstErrorValidatorjs(validation),
-      });
-    }
-
-    try {
-      let stmt = await invtDB.query(
-        "SELECT * FROM `location_allotted` WHERE `loc_all_key`= :key",
-        {
-          replacements: { key: req.body.key },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
-
-      if (stmt.length > 0) {
-        return res.json({ status: "success", success: true, data: stmt });
-      } else {
-        return res.json({
-          status: "error",
-          success: false,
-          message: "No data found",
-        });
-      }
-    } catch (error) {
-      return helper.errorResponse(res, error);
-    }
+  if (validation.fails()) {
+    return res.json({ code: 500, status: "error", message: validation.fails() });
   }
-);
+
+  try {
+    let stmt = await invtDB.query(
+      `SELECT * FROM location_allotted WHERE loc_all_key = :key`,
+      {
+        replacements: { key: req.body.key },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    let stmt_check = await invtDB.query(
+      `SELECT * FROM location_allot_req WHERE loc_all_key = :key AND status = 'PENDING'`,
+      { replacements: { key: req.body.key }, type: invtDB.QueryTypes.SELECT }
+    );
+
+    // console.log("stmt_check", stmt_check);
+
+    if (stmt.length === 0) {
+      return res.json({ code: 404, status: "error", message: "No data found" });
+    }
+
+    // Collect all pending location keys (deduplicated) into a comma-separated string
+    const pendingSet = new Set();
+    stmt_check.forEach((reqRow) => {
+      reqRow.locations.split(",").map((k) => k.trim()).forEach((locKey) => {
+        pendingSet.add(locKey);
+      });
+    });
+    const pendingLocations = [...pendingSet].join(",");
+    // console.log("Pending locations:", pendingLocations);
+
+    const result = stmt.map((row) => ({
+      loc_all_key: row.loc_all_key,
+      module_name: row.for_module,
+      module_description: row.module_desc,
+      allotedLocations: row.locations,
+      pendingLocations: pendingLocations,  // "" if no pending requests
+    }));
+
+    return res.json({ code: 200, status: "success", data: result });
+
+  } catch (err) {
+    console.error(err);
+    return res.json({
+      code: 500,
+      status: "error",
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
+    });
+  }
+});
+
+router.post("/allot_location_req",[auth.isAuthorized], async (req, res) => {
+  let Validation = new Validator(req.body, {
+    locations: "required",
+    locAllkey: "required",
+  })
+  if (Validation.fails()) {
+    return res.json({ code: 500, message: Validation.errors.all(), status: "error" });
+  }
+  const transaction = await invtDB.transaction();
+  try {
+    let locationsstr = req.body.locations.toString();
+    let stmt_check = await invtDB.query(`SELECT * FROM location_allot_req WHERE loc_all_key = :loc_all_key AND locations = :locations AND status = 'PENDING'`, {
+      replacements: {
+        locations: locationsstr,
+        loc_all_key: req.body.locAllkey
+      },
+      type: invtDB.QueryTypes.SELECT,
+    });
+    if (stmt_check.length > 0) {
+      return res.json({ code: 500, status: "error", message: "Location already in the pending list, Kindly wait for approval or contact your authority to approve the location" });
+    }
+
+    let stmt_check_1 = await invtDB.query(`SELECT * FROM location_allotted WHERE locations = :locations`, {
+      replacements: {
+        locations: locationsstr,
+      },
+      type: invtDB.QueryTypes.SELECT,
+    })
+
+    if (stmt_check_1.length > 0) {
+      return res.json({ code: 500, status: "error", message: { msg: "Location already allotted." } });
+    } else {
+      var new_key = new Date().getTime();
+      let stmt = await invtDB.query("INSERT INTO location_allot_req (locations, loc_all_key, status, requestBy, insert_dt, insert_by, req_allot_key) VALUES (:locations, :loc_all_key, :status, :requestedby, :insert_dt, :insert_by, :reqAllotKey)", {
+        replacements: {
+          reqAllotKey: new_key,
+          locations: locationsstr,
+          status: "PENDING",
+          loc_all_key: req.body.locAllkey,
+          requestedby: req.logedINUser,
+          insert_dt: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+          insert_by: req.logedINUser
+          // insert_by: req.logedINUser
+        },
+        type: invtDB.QueryTypes.INSERT,
+        transaction: transaction
+      });
+      await transaction.commit();
+      return res.json({ code: 200, status: "success", message:"Location permission applied successfully"});
+    }
+  } catch (error) {
+    console.log(error);
+    await transaction.rollback();
+    return res.json({ code: 500, message: "Internal Error || If this condition persists, contact your system administrator", status: "error" });
+  }
+});
 
 // UPDATE LOCATION ALLOTTED
 router.post(
@@ -562,6 +638,9 @@ router.post(
 //       return helper.errorResponse(res, error);
 //   }
 // });
+
+
+
 
 // GET LOCTAION STATUS
 router.post("/fetchLocationStatus", [auth.isAuthorized], async (req, res) => {
