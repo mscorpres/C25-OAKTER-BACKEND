@@ -1,6 +1,6 @@
 const { invtDB } = require("../../config/db/connection");
 
-const FG_CUTOFF_DATE = "2026-06-28 21:30:00"; // FG cutoff 28 June 2026 09:30 PM
+const FG_CUTOFF_DATE = "2026-07-07 00:00:00"; // FG cutoff 28 June 2026 09:30 PM
 const INR_CURRENCY = 364907247; // INR
 
 // Inward rate: foreign currency ho to convert, warna seedha in_fg_rate

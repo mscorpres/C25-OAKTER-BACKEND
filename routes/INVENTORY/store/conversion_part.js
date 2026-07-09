@@ -38,26 +38,32 @@ router.post("/saveConversion", [auth.isAuthorized], async (req, res) => {
       "initial.component_in": "required",
       "initial.qty_in": "required",
       "initial.loc_in": "required",
+      "initial.rate": "required",
       "final.component_out": "required",
       "final.qty_out": "required",
       "final.loc_out": "required",
-    }
+      "final.rate": "required",
+    },
   );
 
   if (validation.fails()) {
-    return res.json({ status: "error", success: false, message: "something you missing in form field to supply" });
+    return res.json({
+      success: false,
+      message: "something you missing in form field to supply",
+      status: "error",
+    });
   }
 
-   const rawType = req.body.type;
+  const rawType = req.body.type;
   const typeNorm =
     rawType == null || String(rawType).trim() === ""
       ? "rm"
       : String(rawType).trim().toLowerCase();
   if (typeNorm !== "rm" && typeNorm !== "sf") {
     return res.json({
-      status: "error",
       success: false,
-      message: "type must be 'rm' or 'sf'",
+      message: "type must be RM / SF",
+      status: "error",
     });
   }
   const partInwardType = typeNorm === "sf" ? "SF_PART" : "RM_PART";
@@ -67,95 +73,145 @@ router.post("/saveConversion", [auth.isAuthorized], async (req, res) => {
   const transaction = await invtDB.transaction();
 
   try {
-    let transactionCode = await helper.genTransaction("CONVERSION", transaction);
+    let transactionCode;
+
+    let insert_dt = moment(new Date())
+      .tz("Asia/Kolkata")
+      .format("YYYY-MM-DD HH:mm:ss");
+
+    let stmt6 = await invtDB.query(
+      "SELECT * FROM ims_numbering WHERE for_number = 'CONVERSION' FOR UPDATE",
+      {
+        transaction: transaction,
+        type: invtDB.QueryTypes.SELECT,
+      },
+    );
+
+    if (stmt6.length > 0) {
+      var suffix = stmt6[0].suffix;
+      suffix = parseInt(suffix) + 1;
+      suffix = suffix.toString();
+      suffix = suffix.padStart(parseInt(stmt6[0].number_length_limit), "0");
+      transactionCode = stmt6[0].prefix + "/" + stmt6[0].session + "/" + suffix;
+    } else {
+      let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
+      transactionCode = "CONV/" + currYear + "-" + (currYear + 1) + "/0001";
+    }
+
+    await invtDB.query(
+      "UPDATE ims_numbering SET suffix = suffix+1 WHERE for_number = 'CONVERSION'",
+      {
+        transaction: transaction,
+        type: invtDB.QueryTypes.UPDATE,
+      },
+    );
 
     //OUT Components
     for (let i = 0; i < component_length; i++) {
-      // OUTWARD
-      let stmt1 = await invtDB.query("SELECT COALESCE(SUM(qty+other_qty), 0) AS total_outward FROM rm_location WHERE components_id = :component AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out = :location", {
-        replacements: { component: req.body.initial.component_in[i], location: req.body.initial.loc_in[i] },
-        type: invtDB.QueryTypes.SELECT,
-      });
+      // INWARD + OUTWARD in a single query via conditional aggregation
+      let stmt1 = await invtDB.query(
+        "SELECT COALESCE(SUM(CASE WHEN trans_type IN ('INWARD','ISSUE','JOBWORK','REJECTION','TRANSFER') AND loc_in = :location THEN qty+other_qty ELSE 0 END), 0) AS total_inward, COALESCE(SUM(CASE WHEN trans_type IN ('CONSUMPTION','ISSUE','JOBWORK','REJECTION','TRANSFER') AND loc_out = :location THEN qty+other_qty ELSE 0 END), 0) AS total_outward FROM rm_location WHERE components_id = :component AND (loc_in = :location OR loc_out = :location)",
+        {
+          replacements: {
+            component: req.body.initial.component_in[i],
+            location: req.body.initial.loc_in[i],
+          },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
 
-      let totalOut;
-      if (stmt1.length > 0) {
-        totalOut = stmt1[0].total_outward;
-      } else {
-        totalOut = 0;
-      }
+      let totalIn = stmt1.length > 0 ? stmt1[0].total_inward : 0;
+      let totalOut = stmt1.length > 0 ? stmt1[0].total_outward : 0;
 
-      //INWARD
-      let stmt2 = await invtDB.query("SELECT COALESCE(SUM(qty+other_qty), 0) AS total_inward FROM rm_location WHERE components_id = :component AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in = :location", {
-        replacements: { component: req.body.initial.component_in[i], location: req.body.initial.loc_in[i] },
-        type: invtDB.QueryTypes.SELECT,
-      });
-
-      let totalIn;
-      if (stmt2.length > 0) {
-        totalIn = stmt2[0].total_inward;
-      } else {
-        totalIn = 0;
-      }
-
-      if (parseInt(totalIn) - parseInt(totalOut) >= parseInt(req.body.initial.qty_in[i])) {
+      if (
+        parseInt(totalIn) - parseInt(totalOut) >=
+        parseInt(req.body.initial.qty_in[i])
+      ) {
         let stmt4 = await invtDB.query(
-          "INSERT INTO rm_location (company_branch,loc_out,in_module,trans_type,inward_type,components_id,qty,insert_by,insert_date,any_remark,out_transaction_id) VALUES (:branch,:loc_out,'PART-CONV','CONSUMPTION',:inward_type,:component,:qty,:insert_by,:insert_date,:remark,:out_transaction)",
+          "INSERT INTO rm_location (txn_session,company_branch,loc_out,in_module,trans_type,inward_type,components_id,qty,insert_by,insert_date,any_remark,out_transaction_id, in_po_rate) VALUES (:txn_session,:branch,:loc_out,'PART-CONV','CONSUMPTION',:inward_type,:component,:qty,:insert_by,:insert_date,:remark,:out_transaction, :rate)",
           {
             replacements: {
+              txn_session: helper.generateTxnSession(),
               branch: req.branch,
               loc_out: req.body.initial.loc_in[i],
               inward_type: partInwardType,
               component: req.body.initial.component_in[i],
               qty: req.body.initial.qty_in[i],
               insert_by: req.logedINUser,
-              insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+              insert_date: insert_dt,
               remark: req.body.remarks == null ? "--" : req.body.remarks,
               out_transaction: transactionCode,
+              rate: req.body.initial.rate[i],
             },
             type: invtDB.QueryTypes.INSERT,
             transaction: transaction,
-          }
+          },
         );
 
         if (stmt4.length === 0) {
           await transaction.rollback();
-          return res.json({ status: "error", success: false, message: "Internal Error contact to system administrator" });
+          return res.json({
+            success: false,
+            status: "error",
+            message: "an error occurred while inserting the consumption data",
+          });
         }
       } else {
         await transaction.rollback();
-        return res.json({ status: "error", success: false, message: "Out quantity not available in the location" });
+        return res.json({
+          success: false,
+          message: " Out quantity not available at the location",
+          status: "error",
+        });
       }
     }
 
     //IN Component
     let stmt3 = await invtDB.query(
-      "INSERT INTO rm_location (company_branch,loc_in,in_module,trans_type,inward_type, components_id,qty,insert_by,insert_date,any_remark,in_transaction_id) VALUES (:branch,:loc_in,'PART-CONV','INWARD', :inward_type,:component,:qty,:insert_by,:insert_date,:remark,:in_transaction)",
+      "INSERT INTO rm_location (txn_session,company_branch,loc_in,in_module,trans_type,inward_type,components_id,qty,insert_by,insert_date,any_remark,in_transaction_id, in_po_rate) VALUES (:txn_session,:branch,:loc_in,'PART-CONV','INWARD',:inward_type,:component,:qty,:insert_by,:insert_date,:remark,:in_transaction, :rate)",
       {
         replacements: {
+          txn_session: helper.generateTxnSession(),
           branch: req.branch,
           loc_in: req.body.final.loc_out,
           inward_type: partInwardType,
           component: req.body.final.component_out,
           qty: req.body.final.qty_out,
           insert_by: req.logedINUser,
-          insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+          insert_date: moment(insert_dt)
+            .add(1, "seconds")
+            .format("YYYY-MM-DD HH:mm:ss"),
           remark: req.body.remarks == null ? "--" : req.body.remarks,
           in_transaction: transactionCode,
+          rate: req.body.final.rate,
         },
         type: invtDB.QueryTypes.INSERT,
         transaction: transaction,
-      }
+      },
     );
 
     if (stmt3.length === 0) {
       await transaction.rollback();
-      return res.json({ status: "error", success: false, message: "Internal Error contact to system administrator" });
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Internal Error contact to system administrator",
+      });
     }
 
     await transaction.commit();
-    return res.json({ status: "success", success: true, message: "Conversion Completed", data: {} });
-  } catch (error) {
-      return helper.errorResponse(res, error);
+    return res.json({
+      success: true,
+      status: "success",
+      message: `Conversion Completed with TXN ID: ${transactionCode}.`,
+      data: {
+        txn: transactionCode,
+      },
+    });
+  } catch (err) {
+    console.log(err);
+    await transaction.rollback();
+    return helper.errorResponse(res, err);
   }
 });
 

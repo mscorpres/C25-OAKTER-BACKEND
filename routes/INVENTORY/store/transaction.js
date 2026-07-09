@@ -982,7 +982,7 @@ router.post(
                   loc_in: req.body.out_location[i],
                   loc_out: req.body.location[i],
                   qty: req.body.qty[i],
-                  indate: moment().format("YYYY-MM-DD HH:mm:ss"),
+                  indate: moment(insert_dt).add(1, "seconds").format("YYYY-MM-DD HH:mm:ss"),
                   inby: req.logedINUser,
                   in_transaction_id: in_txn_no,
                   out_transaction_id: out_txn_no,

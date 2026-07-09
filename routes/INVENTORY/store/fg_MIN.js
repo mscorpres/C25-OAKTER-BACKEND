@@ -172,7 +172,7 @@ router.post("/savefginward", [auth.isAuthorized, auth.checkDuplicacy_db], async 
   }
   let uniqueItemCurrencys = [...new Set(itemCurrencys)];
   if (uniqueItemCurrencys.length > 1) {
-    res.json({ success: false, message: "Please select same currency", status: "error" });
+    res.json({ code: 500,success: false, message: "Please select same currency", status: "error" });
     return;
   }
 
@@ -205,7 +205,7 @@ router.post("/savefginward", [auth.isAuthorized, auth.checkDuplicacy_db], async 
       }
     );
     if (itemValidation.fails()) {
-      res.json({ success: false, message: helper.firstErrorValidatorjs(itemValidation), status: "error" });
+      res.json({code: 500, success: false, message: helper.firstErrorValidatorjs(itemValidation), status: "error" });
       return;
     }
   }
@@ -265,19 +265,20 @@ router.post("/savefginward", [auth.isAuthorized, auth.checkDuplicacy_db], async 
 
         let stmt1 = await invtDB.query(
           `INSERT INTO mfg_production_3 
-          (company_branch, mfg_pro_apr_sku, inward_type, mfg_approve_in_qty, currency_type, in_fg_rate, 
+          (txn_session,company_branch, mfg_pro_apr_sku, inward_type, mfg_approve_in_qty, currency_type, in_fg_rate, 
            mfg_pro_location_in, vendor_type, in_vendor_branch, in_vendor_name, in_vendor_addr, 
            in_fg_invoice_id, in_fg_invoice_date, fg_hsn_code, fg_gst_type, fg_gst_rate, fg_cgst, 
            fg_sgst, fg_igst, exchange_rate, mfg_pro_apr_fulldate, mfg_pro_apr_by, 
            fg_out_remark, type, mfg_project_id, mfg_cost_center, mfg_pro_apr_transaction) 
          VALUES 
-          (:branch, :sku, :inward_type, :totalIn, :currency, :rate, 
+          (:txn_session,:branch, :sku, :inward_type, :totalIn, :currency, :rate, 
            :location, :vendortype, :vendor_branch, :vendor_code, :vendor_address, 
            :invoice_id, :invoiceDate, :hsnCode, :gstType, :gstRate, :cgst, 
            :sgst, :igst, :exchange, :insertDt, :insertBy, 
            :remark, 'FGMIN', :project_id, :cost_center, :transactionID)`,
           {
             replacements: {
+              txn_session: helper.generateTxnSession(),
               branch: req.branch,
               sku: stmt_prod[0].p_sku,
               inward_type: inward_type,
@@ -360,11 +361,11 @@ router.post("/savefginward", [auth.isAuthorized, auth.checkDuplicacy_db], async 
 
         if (!stmt1 || stmt1[1] === 0) {
           await transaction.rollback();
-          return res.json({ success: false, status: "error", message: "Internal Error contact to system administrator" });
+          return res.json({ code: 200,success: false, status: "error", message: "Internal Error contact to system administrator" });
         }
       } else {
         await transaction.rollback();
-        return res.json({ success: false, status: "error", message: "Product SKU not matched"  });
+        return res.json({ code: 200,success: false, status: "error", message: "Product SKU not matched"  });
       }
     }
 
