@@ -29,33 +29,33 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 
     if (!date) {
       return res.json({
+        success: false,
         status: "error",
         message: "Please supply date",
-        success: false,
       });
     }
 
     if (!skucode) {
       return res.json({
+        success: false,
         status: "error",
         message: "Please supply product",
-        success: false
       });
     }
 
     if (!location) {
       return res.json({
+        success: false,
         status: "error",
         message: "Please supply location",
-        success: false
       });
     }
 
     if (!subject) {
       return res.json({
+        success: false,
         status: "error",
         message: "Please supply subject",
-        success: false
       });
     }
 
@@ -88,9 +88,9 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 
     if (!stmt2.length) {
       return res.json({
+        success: false,
         status: "error",
         message: "no any recipes found for the product sku code, that you supplied..",
-        success: false,
       });
     }
 
@@ -296,7 +296,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             bomalt_part: alt_component_part.join(", "),
             bomalt_name: alt_component_name.join(", "),
             bomqty: item.qty,
-            weightedPurchaseRate: (Number(weightedPurchaseRate) || 0).toFixed(2),
+            weightedPurchaseRate: (Number(weightedPurchaseRate) || 0).toFixed(10),
           };
         } catch (err) {
           console.error("Component Query Error:", item.component_key, err);
@@ -308,13 +308,12 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     data.sort(byDate);
 
     return res.json({
-      status: "success",
       success: true,
-      response: data,
+      status: "success",
+      data: data
     });
   } catch (error) {
     console.error("API ERROR:", error);
-
     return helper.errorResponse(res, error);
   }
 });
@@ -326,7 +325,7 @@ router.post("/fetchLocationDetail", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      successLfalse,
+      success:false,
       status: "error",
       message: "Please select valid location",
     });
