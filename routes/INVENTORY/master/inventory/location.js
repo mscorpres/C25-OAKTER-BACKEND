@@ -161,7 +161,6 @@ router.post("/fetchLocationBranch", async (req, res) => {
 router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
   const validation = new Validator(req.body, {
     location_name: "required",
-    location_heading: "required",
     location_address: "required",
     location_under: "required",
     location_type: "required",
