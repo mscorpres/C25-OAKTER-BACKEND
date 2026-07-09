@@ -32,11 +32,12 @@ router.post("/fetchLocationTree", [auth.isAuthorized], async (req, res) => {
     if (result.length > 0) {
       tree = (function (data, root) {
         var t = {};
-        data.forEach(({ location_key, loc_name, parents_id, loc_status }) => {
+        data.forEach(({ location_key, loc_name, parents_id, loc_status, location_heading }) => {
           Object.assign((t[location_key] = t[location_key] || {}), {
             label: location_key,
             name: loc_name,
             status: loc_status,
+            locationHeading: location_heading,
           });
           t[parents_id] = t[parents_id] || {};
           t[parents_id].children = t[parents_id].children || [];
@@ -189,13 +190,13 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
     }
   }
 
-  if (req.logedINUser !== "CRN301718") {
-    return res.json({
-      code: 500,
-      message: { msg: "You are not authorized to add location" },
-      status: "error",
-    });
-  }
+  // if (req.logedINUser !== "CRN301718") {
+  //   return res.json({
+  //     code: 500,
+  //     message: "You are not authorized to add location" ,
+  //     status: "error",
+  //   });
+  // }
 
   try {
     var new_key = new Date().getTime();

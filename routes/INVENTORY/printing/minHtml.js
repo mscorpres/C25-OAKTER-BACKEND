@@ -132,7 +132,7 @@ exports.minHtml = (data, parts, reverse_parts) => {
       <section class="section-1">
           <div>
               RIOT LABZ PRIATE LIMITED <br>
-              Alwar, Rajasthan - 301030
+              Gautambuddha Nagar, Uttar Pradesh - 201305
           </div>
           <h5>GSTIN NO :08AAHCR1005Q1Z6</h5>
       </section>
@@ -152,7 +152,8 @@ exports.minHtml = (data, parts, reverse_parts) => {
                       <h5>Delivery Addr : </h5>
                   </td>
                   <td>
-                      <p>WH : B - 36 , Alwar ( Rajasthan)</p>
+                      <p>C-26, Hosiery Complex Phase 2,
+                      Gautambuddha Nagar, Noida, Uttar Pradesh</p>
                   </td>
               </tr>
               <tr>
@@ -299,7 +300,7 @@ exports.minHtml = (data, parts, reverse_parts) => {
       </section>
       <section style="border-bottom: 1px solid black;" class="section-4">
           <div>
-              <h5>REGD OFFICE :-</h5>Building No. B-36, Street: Matasya Industrial Area - Alwar (R.J) 301030
+              <h5>REGD OFFICE :-</h5>C-26, Hosiery Complex Phase 2 Gautambuddha Nagar, - Noida (U.P) 201305
           </div>
           <div>
               <h5>Note :- </h5>
