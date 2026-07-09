@@ -52,7 +52,7 @@ exports.printHtml = function (header, items_data, summary_table , summary_table2
     </style>
   </head>
   <body>
-    <h3 style="width: 100%; text-align: center; padding-bottom: 20px">RIOT LABZ PRIVATE LIMITED (ALWAR)</h3>
+    <h3 style="width: 100%; text-align: center; padding-bottom: 20px">RIOT LABZ PRIVATE LIMITED (Uttar Pradesh)</h3>
     <!-- first table -->
     <table class="main-table">
       <tr style="width: 100vw">
@@ -76,8 +76,8 @@ exports.printHtml = function (header, items_data, summary_table , summary_table2
                 <td class="no-border"><h5>Delivery Addr :</h5></td>
                 <td class="no-border">
                   <span>
-                    B-36, Matasya Industrial Area, <br />
-                    Alwar-301030 ( Rajsthan) <br />
+                    C-26, Hosiery Complex Phase 2,Noida, <br />
+                    Gautambuddha Nagar-201305 ( Uttar Pradesh) <br />
                   </span>
                 </td>
                 <td class="no-border"><h5>VBT Date: </h5></td>
@@ -141,7 +141,7 @@ exports.printHtml = function (header, items_data, summary_table , summary_table2
         </tr>
         <tr>
             <td>
-                <p style="margin-bottom: 10px;"><strong>REGD. OFFICE:- </strong> - B-36, Matasya Industrial Area, Alwar-301030 ( Rajsthan)</p>
+                <p style="margin-bottom: 10px;"><strong>REGD. OFFICE:- </strong> - C-26, Hosiery Complex Phase 2 Gautambuddha Nagar, Noida-201305 ( Uttar Pradesh)</p>
                 <p><strong>NOTE:-</strong></p>
             </td>
         </tr>
