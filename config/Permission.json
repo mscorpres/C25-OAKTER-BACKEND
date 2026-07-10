@@ -343,10 +343,10 @@
         "email": "hariom.kumar@mscorpres.in",
         "can_create_po": true,
         "can_edit_own_po": true,
-        "can_edit_team_po": false,
+        "can_edit_team_po": true,
         "can_approve_po": true,
         "can_approve_po_first_level": true,
-        "can_approve_po_final_level": false
+        "can_approve_po_final_level": true
       },
       
       "members": [
