@@ -48,6 +48,7 @@ module.exports = function (app) {
   app.use("/qrLabel", require("./INVENTORY/printing/qr_label"));
   app.use("/qcalable", require("./INVENTORY/printing/qcaLable"));
   app.use("/printDoc", require("./INVENTORY/printing/downloadAttachment"));
+  app.use("/cancelRequest", require("./INVENTORY/others/cancelRequest"));
   app.use("/minPrint", require("./INVENTORY/printing/minPrint"));
   app.use("/FGMinPrint", require("./INVENTORY/printing/fgMinPrint"));
   app.use("/minPrint", require("./INVENTORY/printing/boxLableQr"));
