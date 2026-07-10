@@ -48,7 +48,7 @@ const Validator = require("validatorjs");
 //   }
 // });
 
-router.post("/add_team_in_po", async (req, res) => {
+router.post("/add_team_in_po", [auth.isAuthorized], async (req, res) => {
   try {
     let validation = new Validator(req.body, {
       team_leader: "required",
@@ -80,8 +80,9 @@ router.post("/add_team_in_po", async (req, res) => {
       }
     }
 
+    var new_key = new Date().getTime();
     for (let cc of inserted) {
-      var new_key = new Date().getTime();
+ 
       let stmt_add = await otherDB.query("INSERT INTO ims_po_team (map_key,ims_po_team_leader,ims_po_team_member , po_cost_center, status_map_po_cc) VALUES (:map_key,:team_leader,:team_member , :costCenter, :reqMapStatus )", {
         replacements: {
           map_key: new_key,
@@ -93,8 +94,8 @@ router.post("/add_team_in_po", async (req, res) => {
         type: otherDB.QueryTypes.INSERT,
       });
 
-      await invtDB.query(
-        `INSERT INTO ims_po_team_log (map_key, action, insert_by, insert_dt, comment) VALUES (:map_key, :action, :insert_by, :insert_dt, :comment)`,
+      await otherDB.query(
+        `INSERT INTO ims_po_team_logs (map_key, action, insert_by, insert_dt, comment) VALUES (:map_key, :action, :insert_by, :insert_dt, :comment)`,
         {
           replacements: {
             map_key: new_key,

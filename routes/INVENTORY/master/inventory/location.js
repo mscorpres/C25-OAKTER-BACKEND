@@ -450,6 +450,10 @@ router.post("/allot_location_req",[auth.isAuthorized], async (req, res) => {
       type: invtDB.QueryTypes.SELECT,
     })
 
+    if(req.body.locations.length === 0){
+      return res.json({ code: 500, status: "error", message: "No locations selected" });
+    }
+
     if (stmt_check_1.length > 0) {
       return res.json({ code: 500, status: "error", message: { msg: "Location already allotted." } });
     } else {
