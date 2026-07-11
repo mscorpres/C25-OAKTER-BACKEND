@@ -1144,6 +1144,7 @@ router.post(
       }
 
       return res.json({
+        success: true,
         message: `MIN done with TXN ID: ${in_txn_no}.`,
         status: "success",
         data: {
