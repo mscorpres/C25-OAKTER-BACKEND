@@ -890,7 +890,7 @@ router.post(
           return res.json({
             success: false,
             status: "error",
-            message: valid.errors.all(),
+            message: helper.firstErrorValidatorjs(valid),
           });
         }
 
