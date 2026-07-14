@@ -80,7 +80,16 @@ if (process.env.STAGE == "PROD") {
     pool: poolOption, timezone: "+05:30"
   });
 
-    invtC25 = new Sequelize(
+  const commonConfig = {
+    host: process.env.DB_INVT_HOST,
+    dialect: "mysql",
+    dialectOptions: options,
+    pool: poolOption,
+    timezone: "+05:30",
+    logging: true // set true only for debugging
+  };
+
+  invtC25 = new Sequelize(
     process.env.DB_C25_INVT_DBNAME,
     process.env.DB_USER,
     process.env.DB_PASS,
