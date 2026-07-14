@@ -3,8 +3,16 @@ const { otherDB } = require("../config/db/connection");
 
 const { v4: uuidv4 } = require("uuid");
 
+// Only mutating requests are logged — GET/HEAD/OPTIONS traffic (reports, dropdowns,
+// CORS preflights) would flood the table without adding any audit value.
+const LOGGED_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 // Middleware to log activity directly to database.
 module.exports = function (req, res, next) {
+  if (!LOGGED_METHODS.has(req.method)) {
+    return next();
+  }
+
   const startTime = Date.now();
   const logId = uuidv4();
   
