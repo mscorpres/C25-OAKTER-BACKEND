@@ -824,6 +824,9 @@
 if In any case, advance payment has been made, the unadjusted portion of such advance shall be returned, without any delay, upon its modification, suspension or cancellation or in accordance with the revised terms of the PO</td>
                         </tr>
                         <tr>
+                            <td colspan="12" style="font-size:10px" class="noBorder-top"><b>7.</b> Payment, Cancellation and Penalty - The Buyer may withhold or deduct payment if materials fail to meet agreed specifications, quality standards, or delivery deadlines. The Buyer may cancel the Purchase Order, in whole or in part, for such breach. The Supplier shall pay a penalty of [10 %] of the PO value per week (or part) of delay, up to [100 %] of the PO value. Withheld amounts and penalties may be set off against amounts due or recovered as a debt. These rights are without prejudice to any other remedies available to the Buyer.</td>
+                        </tr>
+                        <tr>
                             <td colspan="4" class="noBorder-top noBorder-right"></td>
                             <td colspan="8" class="noBorder-top"></td>
                         </tr>

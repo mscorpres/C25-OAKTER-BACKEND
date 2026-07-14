@@ -814,8 +814,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			  let transaction_qty_out = 0;
 			  let transaction_doneby;
 			  let transaction_date;
-			  let qty_in_rate = 0;
-			  let out_rate = 0;
+			  let rate = item.in_fg_rate || 0;
 			  let location_in = "--";
 			  let location_out = "--";
 			  let mode = "--";
@@ -850,14 +849,6 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_qty_in = item.in_qty || 0;
 				transaction_qty_out = 0;
 				transaction_doneby = item.in_by_user;
-
-				const calculatedFG_Rate = await calculateFGRate(
-				  item.mfg_ref_transid_2,
-				  item.in_qty,
-				);
-
-				qty_in_rate = calculatedFG_Rate; 
-				out_rate = 0;
 				location_in = item.loc_in_name || "--";
 				location_out = "--";
 				mode = "FGIN";
@@ -875,8 +866,6 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_qty_in = item.in_qty || 0;
 				transaction_qty_out = 0;
 				transaction_doneby = item.in_by_user || "--";
-				qty_in_rate = item.in_fg_rate || 0;
-				out_rate = 0;
 				location_in = item.loc_in_name || "--";
 				location_out = "--";
 				mode = "FGMIN";
@@ -894,8 +883,6 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_qty_in = item.in_qty || 0;
 				transaction_qty_out = item.in_qty || 0;
 				transaction_doneby = item.in_by_user || "--";
-				qty_in_rate = item.in_fg_rate || 0;
-				out_rate = 0;
 				location_in = item.loc_in_name || "--";
 				const sourceOutRow = item.mfg_pro_apr_transaction
 				  ? stmt2.find(
@@ -924,8 +911,6 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_qty_in = 0;
 				transaction_qty_out = item.out_qty || 0;
 				transaction_doneby = item.out_by_user || "--";
-				qty_in_rate = 0;
-				out_rate =  0;
 				location_in = "--";
 				location_out = item.loc_out_name || "--";
 				if (item.fg_out_type === "SL001") {
@@ -947,8 +932,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_qty_in = 0;
 				transaction_qty_out = 0;
 				transaction_doneby = "N/A";
-				qty_in_rate = 0;
-				out_rate = 0;
+				rate = 0;
 				location_in = "--";
 				location_out = "--";
 				mode = "--";
@@ -980,8 +964,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				transaction_id: transaction_id,
 				qty_in: transaction_qty_in,
 				qty_out: transaction_qty_out,
-				qty_in_rate: qty_in_rate,
-				out_rate: out_rate,
+				rate: rate,
 				weightedSKURate: weightedSKURate,
 				newWAR: await fgWeightedAverageRate(req.query.sku, txDateFormatted, item.m3_id),
 				location_in: location_in,
