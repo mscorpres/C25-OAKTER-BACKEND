@@ -4930,7 +4930,7 @@ router.post("/updatePOApproval", [auth.isAuthorized], async (req, res) => {
                           `;
 
           let file = {
-            url: `${process.env.API_URL}/helper/PRINT/PHP/PO/alwar-printReceipt.php?invoice=${Buffer.from(req.body.poid[i]).toString("base64")}`
+            url: `${process.env.API_URL}/helper/PRINT/PHP/PO/printReceipt.php?invoice=${Buffer.from(req.body.poid[i]).toString("base64")}`
           };
           let options = { format: "A4" };
           html_to_pdf

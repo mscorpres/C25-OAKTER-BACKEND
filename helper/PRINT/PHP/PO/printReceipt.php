@@ -344,127 +344,100 @@
     
         
     
+        // Get shipment details with po_ship_type to determine source
         $stmt = $con->prepare(
-        "SELECT `po_purchase_req`.`po_ship_id` AS `po_ship_id`, 
-                `po_purchase_req`.`po_ship_address` AS `po_ship_address`,
-                `po_purchase_req`.`po_ship_type` AS `po_ship_type`,
-                `po_purchase_req`.`po_ship_vendor_branch` AS `po_ship_vendor_branch`,
-                `po_purchase_req`.`ship_partyname` AS `ship_partyname`,
-                `po_purchase_req`.`ship_other_pan` AS `ship_other_pan`,
-                `po_purchase_req`.`ship_other_gstin` AS `ship_other_gstin`,
-                `po_purchase_req`.`po_ship_line1` AS `po_ship_line1`,
-                `po_purchase_req`.`po_ship_line2` AS `po_ship_line2`,
-                `po_purchase_req`.`po_status`,
-                `shipment_address`.*,
-                `ven_basic_detail`.`ven_name`,
-                `ven_address_detail`.`ven_address`,
-                `ven_address_detail`.`ven_add_gst`,
-                `ven_address_detail`.`ven_state` AS `ven_state_code_id`,
-                `ven_address_detail`.`ven_pincode`,
-                `state_code`.`state_name` AS `ven_state_name`,
-                `state_code`.`state_code` AS `ven_state_code`,
-               
-                COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`, 
-                COALESCE(SUM(`po_purchase_req`.`po_pending_qty`),0) `totalIn_Qty` 
-         FROM `po_purchase_req` 
-         LEFT JOIN `shipment_address` ON `shipment_address`.`shipment_code` = `po_purchase_req`.`po_ship_id` AND `po_purchase_req`.`po_ship_type` = 'saved'
-         LEFT JOIN `ven_basic_detail` ON `ven_basic_detail`.`ven_register_id` = `po_purchase_req`.`po_ship_id` AND `po_purchase_req`.`po_ship_type` = 'vendor'
-         LEFT JOIN `ven_address_detail` ON `ven_address_detail`.`ven_id` = `po_purchase_req`.`po_ship_id` AND `ven_address_detail`.`ven_address_id` = `po_purchase_req`.`po_ship_vendor_branch` AND `po_purchase_req`.`po_ship_type` = 'vendor'
-         LEFT JOIN `state_code` ON `state_code`.`ID` = `ven_address_detail`.`ven_state`
-         LEFT JOIN `state_code` AS `manual_state` ON `manual_state`.`ID` = `po_purchase_req`.`po_ship_state_code`
-         WHERE `po_purchase_req`.`po_transaction` = :po_transaction 
-         GROUP BY `po_purchase_req`.`po_transaction`"
-    );
+            "SELECT `po_purchase_req`.`po_ship_id` AS `po_ship_id`, 
+                    `po_purchase_req`.`po_ship_address` AS `po_ship_address`,
+                    `po_purchase_req`.`po_ship_type` AS `po_ship_type`,
+                    `po_purchase_req`.`po_status`,
+                    `shipment_address`.*,
+                    COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`, 
+                    COALESCE(SUM(`po_purchase_req`.`po_pending_qty`),0) `totalIn_Qty` 
+             FROM `po_purchase_req` 
+             LEFT JOIN `shipment_address` ON `shipment_address`.`shipment_code` = `po_purchase_req`.`po_ship_id` AND `po_purchase_req`.`po_ship_type` = 'saved'
+             WHERE `po_purchase_req`.`po_transaction` = :po_transaction 
+             GROUP BY `po_purchase_req`.`po_transaction`"
+        );
         $stmt->execute([':po_transaction' => $po_transaction]);
         
         $po_cancel_status = false;
+        $shipment_from_billing = false;
+        // Initialize shipment variables
+        $shipment_company = "N/A";
+        $shipment_address = "N/A";
+        $shipment_gstin = "N/A";
+        $shipment_statename = "N/A";
+        $shipment_statecode = "N/A";
+        $shipment_pincode = "N/A";
         
-         
-        
-      if ($stmt->rowCount() > 0) {
-    while ($shipment_details = $stmt->fetch()) {
-        $ship_type = $shipment_details['po_ship_type'];
-        
-        // Handle based on ship_type
-        if ($ship_type == 'saved') {
-            // Check if using billing address as shipment
-            if ($shipment_details['po_ship_id'] == $billing_address_id) {
-                // Use billing address details
-                $shipment_company = $billing_company;
-                $shipment_address = $billing_address;
-                $shipment_gstin = $billing_gstid;
-                $shipment_statename = $billing_state_name;
-                $shipment_statecode = $billing_state_code;
-                $shipment_pincode = ''; // Add billing pincode if available
+        if ($stmt->rowCount() > 0) {
+            $shipment_details = $stmt->fetch();
+            $ship_type = $shipment_details['po_ship_type'];
+            
+            // Handle based on ship_type
+            if ($ship_type == 'saved') {
+                // Check if using billing address as shipment
+                if ($shipment_details['po_ship_id'] == $billing_address_id) {
+                    // Use billing address details
+                    $shipment_from_billing = true;
+                    $shipment_company = $billing_company;
+                    $shipment_address = $billing_address;
+                    $shipment_gstin = $billing_gstid;
+                    $shipment_statename = $billing_state_name;
+                    $shipment_statecode = $billing_state_code;
+                    $shipment_pincode = ''; // Extract from address if available
+                    
+                    // Extract pincode from address if available (format: PIN Code: 301030)
+                    if (preg_match('/PIN Code:\s*(\d+)/i', $shipment_address, $matches)) {
+                        $shipment_pincode = $matches[1];
+                    }
+                } else {
+                    // Use shipment_address table details
+                    $shipment_company = $shipment_details['shipment_company'] ?: 'N/A';
+                    
+                    if ($shipment_details['po_ship_address'] !== "--" && $shipment_details['po_ship_address'] !== "") {
+                        $shipment_address = $shipment_details['po_ship_address'];
+                    } elseif ($shipment_details['shipment_address'] !== "" && $shipment_details['shipment_address'] !== null) {
+                        $shipment_address = $shipment_details['shipment_address'];
+                    } else {
+                        $shipment_address = 'N/A';
+                    }
+                    
+                    $shipment_pincode = $shipment_details['shipment_pincode'] ?: 'N/A';
+                    $shipment_gstin = $shipment_details['shipment_gstin'] ?: 'N/A';
+                    $shipment_statename = $shipment_details['shipment_state'] ?: 'N/A';
+                    $shipment_statecode = $shipment_details['shipment_state_code'] ?: 'N/A';
+                }
             } else {
-                // Use shipment_address table details
-                $shipment_company = $shipment_details['shipment_company'] ?: 'N/A';
-                
+                // For vendor or manual type, use po_ship_address or other fields
                 if ($shipment_details['po_ship_address'] !== "--" && $shipment_details['po_ship_address'] !== "") {
                     $shipment_address = $shipment_details['po_ship_address'];
-                } elseif ($shipment_details['shipment_address'] !== "" && $shipment_details['shipment_address'] !== null) {
-                    $shipment_address = $shipment_details['shipment_address'];
                 } else {
                     $shipment_address = 'N/A';
                 }
-                
-                $shipment_pincode = $shipment_details['shipment_pincode'] ?: 'N/A';
-                $shipment_gstin = $shipment_details['shipment_gstin'] ?: 'N/A';
-                $shipment_statename = $shipment_details['shipment_state'] ?: 'N/A';
-                $shipment_statecode = $shipment_details['shipment_state_code'] ?: 'N/A';
+                $shipment_pincode = "N/A";
+                $shipment_gstin = "N/A";
+                $shipment_statename = "N/A";
+                $shipment_statecode = "N/A";
+                $shipment_company = "N/A";
             }
             
-        } elseif ($ship_type == 'vendor') {
-            
-            if ($shipment_details['po_ship_address'] !== "--" && $shipment_details['po_ship_address'] !== "") {
-                $shipment_address = html_entity_decode($shipment_details['po_ship_address']);
-            } elseif ($shipment_details['ven_address'] !== "" && $shipment_details['ven_address'] !== null) {
-                $shipment_address = html_entity_decode($shipment_details['ven_address']);
-            } else {
-                $shipment_address = 'N/A';
+            // Check cancellation status
+            if($shipment_details['totalIn_Qty'] <= 0 || $shipment_details['po_status'] == "C"){
+                if ($shipment_details['totalIn_Qty'] == $shipment_details['totalReq_Qty'] && $shipment_details['po_status'] == "C") {
+                    $po_cancel_status = "<p>Cancel Status:- <strong> FULLY CANCELLED</strong>";
+                } else if ($shipment_details['totalReq_Qty'] > $shipment_details['totalIn_Qty'] && $shipment_details['totalIn_Qty'] !== "0" && $shipment_details['po_status'] == "C") {
+                    $po_cancel_status = "<p>Cancel Status:- <strong> PARTIALLY CANCELLED</strong>";
+                }
             }
-            $shipment_pincode = $shipment_details['ven_pincode'] ?: 'N/A';
-            $shipment_gstin = $shipment_details['ven_add_gst'] ?: 'N/A';
-            $shipment_statename = $shipment_details['ven_state_name'] ?: 'N/A';
-            $shipment_statecode = $shipment_details['ven_state_code'] ?: 'N/A';
-            $shipment_company = html_entity_decode($shipment_details['ven_name']) ?: 'N/A';
-            
-        } elseif ($ship_type == 'manual') {
-            
-            $shipment_company = html_entity_decode($shipment_details['ship_partyname']) ?: 'N/A';
-            $shipment_address = $shipment_details['po_ship_address'] ?: 'N/A';
-            $shipment_gstin = $shipment_details['ship_other_gstin'] ?: 'N/A';
-            $shipment_pincode = 'N/A'; // Add if you have this field
-            $shipment_statename = 'N/A'; // Add if you have this field
-            $shipment_statecode = 'N/A'; // Add if you have this field
-            
         } else {
-            // Default fallback
-            $shipment_address = "N/A";
-            $shipment_pincode = "N/A";
-            $shipment_gstin = "N/A";
-            $shipment_statename = "N/A";
-            $shipment_statecode = "N/A";
-            $shipment_company = "N/A";
+            $shipment_address = "N/A IN DB";
+            $shipment_pincode = "N/A IN DB";
+            $shipment_gstin = "N/A IN DB";
+            $shipment_statename = "N/A IN DB";
+            $shipment_statecode = "N/A IN DB";
+            $shipment_company = "N/A IN DB";
         }
-        
-        // Check cancellation status
-        if($shipment_details['totalIn_Qty'] <= 0 || $shipment_details['po_status'] == "C"){
-            if ($shipment_details['totalIn_Qty'] == $shipment_details['totalReq_Qty'] && $shipment_details['po_status'] == "C") {
-                $po_cancel_status = "<p>Cancel Status:- <strong> FULLY CANCELLED</strong>";
-            } else if ($shipment_details['totalReq_Qty'] > $shipment_details['totalIn_Qty'] && $shipment_details['totalIn_Qty'] !== "0" && $shipment_details['po_status'] == "C") {
-                $po_cancel_status = "<p>Cancel Status:- <strong> PARTIALLY CANCELLED</strong>";
-            }
-        }
-    }
-} else {
-    $shipment_address = "N/A IN DB";
-    $shipment_pincode = "N/A IN DB";
-    $shipment_gstin = "N/A IN DB";
-    $shipment_statename = "N/A IN DB";
-    $shipment_statecode = "N/A IN DB";
-    $shipment_company = "N/A IN DB";
-}
     }
     
     $stmt = $con->prepare(
@@ -756,15 +729,21 @@
                         </tr>
                         <tr>
                             <td colspan="5" style="font-size: 11px; vertical-align: text-top; text-align: left;">Dispatch To :<br/><strong style="font-size: 14px;">' .
-        $shipment_company .
-        '</strong><br/><mark>' .
-        $shipment_address .
-        '</mark><br/>GSTIN/UIN: ' .
-        $shipment_gstin .
+        ($shipment_company ? $shipment_company : 'N/A') .
+        '</strong><br/>' .
+        ($shipment_from_billing ? 
+            // Format billing address - convert <br> tags to proper line breaks
+            str_replace(['<br>', '<br/>', '<br />'], '<br/>', html_entity_decode($shipment_address)) 
+            : 
+            '<mark>' . ($shipment_address ? $shipment_address : 'N/A') . '</mark>'
+        ) .
+        ($shipment_pincode && $shipment_pincode !== 'N/A' && $shipment_pincode !== '' && !$shipment_from_billing ? '<br/>PIN Code: ' . $shipment_pincode : '') .
+        '<br/>GSTIN/UIN: ' .
+        ($shipment_gstin && $shipment_gstin !== '--' ? $shipment_gstin : 'N/A') .
         '<br/>State Name : ' .
-        $shipment_statename .
+        ($shipment_statename && $shipment_statename !== '--' ? $shipment_statename : 'N/A') .
         ', Code : (' .
-        $shipment_statecode .
+        ($shipment_statecode && $shipment_statecode !== '--' ? $shipment_statecode : 'N/A') .
         ')</td>
                         </tr>
                         <tr>
