@@ -10,6 +10,7 @@ let { invtDB } = require("../../../../config/db/connection");
 
 const htmlToPdf = require("html-pdf-node");
 const fs = require("fs");
+const axios = require("axios");
 
 const Validator = require("validatorjs");
 
@@ -460,5 +461,93 @@ router.get("/listBranchTransfer", [auth.isAuthorized], async (req, res) => {
 });
 
 
+// CREATE BRANCH TRANSFER INWARD (PULL ISSUE DATA FROM SOURCE BRANCH SOFTWARE)
+router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res) => {
+
+  try {
+
+    const valid = new Validator(req.body, {
+      trans_id: "required",
+    });
+
+    if (valid.fails()) {
+      return res.json({ status: "error", success: false, message: "Challan ID missing!", data: valid.errors.all() });
+    }
+
+    const trans_id = req.body.trans_id;
+
+    // ALREADY INWARDED CHECK
+    const already_inward = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' LIMIT 1", {
+      replacements: { trans_id },
+      type: invtDB.QueryTypes.SELECT
+    });
+
+    if (already_inward.length > 0) {
+      return res.json({ status: "error", success: false, message: "This branch transfer has already been received!" });
+    }
+
+    // FETCH ISSUE DETAILS FROM SOURCE BRANCH SOFTWARE
+    let remote_response;
+    try {
+      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/details", {
+        params: { trans_id: trans_id },
+      });
+    }
+    catch (err) {
+      return res.json({ status: "error", success: false, message: "Unable to fetch data from source branch software" });
+    }
+
+    const remote_data = remote_response.data;
+
+    if (!remote_data || !remote_data.success || !Array.isArray(remote_data.data) || remote_data.data.length == 0) {
+      return res.json({ status: "error", success: false, message: "No record found for this transaction on source branch" });
+    }
+
+    const transaction = await invtDB.transaction();
+
+    try {
+
+      let insert_dt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
+      const items = remote_data.data;
+
+      for (let i = 0; i < items.length; i++) {
+
+        // INSERT RM LOCATION INWARD
+        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status)", {
+          replacements: {
+            branch: req.branch,
+            type: "INWARD",
+            component: items[i].componentKey,
+            loc_in: items[i].locInKey,
+            loc_out: items[i].locOutKey,
+            qty: items[i].qty,
+            remark: items[i].remark ? items[i].remark : "--",
+            indate: insert_dt,
+            inby: req.logedINUser,
+            in_transaction_id: items[i].transId,
+            stock_status: "PHYSICAL",
+          },
+          type: invtDB.QueryTypes.INSERT,
+          transaction: transaction,
+        });
+        // END INSERT RM LOCATION INWARD
+
+      }// END LOOP
+
+      await transaction.commit();
+      return res.json({ status: "success", success: true, message: "Branch Transfer Inward Successfully" });
+
+    }
+    catch (err) {
+      await transaction.rollback();
+      return res.json({ status: "error", success: false, message: "Internal Error!!! If this condition persists, contact your system administrator", debug: process.env.NODE_ENV === 'development' ? err.stack : undefined });
+    }
+
+  }
+  catch (err) {
+    return res.json({ status: "error", success: false, message: "Internal Error!!! If this condition persists, contact your system administrator", debug: process.env.NODE_ENV === 'development' ? err.stack : undefined });
+  }
+
+});
 
 module.exports = router
