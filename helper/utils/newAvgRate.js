@@ -59,7 +59,10 @@ function isInwardTxn(txn) {
       txn.in_module === "IN-JWI" &&
       txn.vendor_type === "j01") ||
     (txn.trans_type === "INWARD" && txn.in_module === "PART-CONV") ||
-    (txn.trans_type === "INWARD" && txn.in_module === "IN-QCA")
+    (txn.trans_type === "INWARD" && txn.in_module === "IN-QCA")  ||
+    (txn.trans_type === "TRANSFER" &&
+      txn.trans_mode === "return" &&
+      txn.vendor_type === "j01")
   );
 }
 
