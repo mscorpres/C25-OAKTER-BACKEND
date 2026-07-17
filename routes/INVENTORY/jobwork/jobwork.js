@@ -854,7 +854,7 @@ router.post(
         return res.json({
           success: false,
           message: "Something you missing in form field to supply",
-          data: validation.errors.all(),
+          data: null,
           status: "error",
         });
       }
@@ -890,7 +890,7 @@ router.post(
           return res.json({
             success: false,
             status: "error",
-            message: valid.errors.all(),
+            message: "Invalid Data",
           });
         }
 
@@ -923,10 +923,8 @@ router.post(
           return res.json({
             success: false,
             status: "error",
-            message: {
-              message:
-                "we are unable to perform the action bcz it seems you have already created the material recipe.",
-            },
+            message: 
+             "we are unable to perform the action bcz it seems you have already created the material recipe."
           });
         }
 
