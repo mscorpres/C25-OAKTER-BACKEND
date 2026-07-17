@@ -39,7 +39,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 			return res.json({ status: "error", success: false, message: statusMessage });
 		}
 
-		let file = { url: `${process.env.API_URL}/helper/PRINT/PHP/PO/alwar-printReceipt.php?invoice=${Buffer.from(req.body.poid).toString("base64")}` };
+		let file = { url: `${process.env.API_URL}/helper/PRINT/PHP/PO/printReceipt.php?invoice=${Buffer.from(req.body.poid).toString("base64")}` };
 		let options = { format: "A4" };
 		await html_to_pdf
 			.generatePdf(file, options)

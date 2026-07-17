@@ -8,6 +8,40 @@ let { invtDB } = require("../../../../config/db/connection");
 const { encode, decode } = require("html-entities");
 const Validator = require("validatorjs");
 
+// qa_sfg_sku is what QCA lot transfer writes into mfg_production_2/_3 as mfg_sku,
+// so a blank or unknown value here silently breaks production and the MFG reports.
+// Returns { error } on failure, { skus } (trimmed) on success.
+async function validateSfgSkus(sfg_sku, expectedLength) {
+  if (!Array.isArray(sfg_sku) || sfg_sku.length === 0) {
+    return { error: "Please provide the SFG SKU for each process" };
+  }
+
+  if (sfg_sku.length !== expectedLength) {
+    return { error: "SFG SKU must be provided for every process" };
+  }
+
+  const skus = sfg_sku.map((sku) => (sku === null || sku === undefined ? "" : String(sku).trim()));
+
+  if (skus.some((sku) => sku === "")) {
+    return { error: "SFG SKU cannot be empty for any process" };
+  }
+
+  const uniqueSkus = [...new Set(skus)];
+  const existing = await invtDB.query("SELECT p_sku FROM products WHERE p_sku IN (:skus)", {
+    replacements: { skus: uniqueSkus },
+    type: invtDB.QueryTypes.SELECT,
+  });
+
+  const found = new Set(existing.map((row) => row.p_sku));
+  const missing = uniqueSkus.filter((sku) => !found.has(sku));
+
+  if (missing.length > 0) {
+    return { error: `SFG SKU not found in products: ${missing.join(", ")}` };
+  }
+
+  return { skus };
+}
+
 // add new process
 router.post("/insert_Process", [auth.isAuthorized], async (req, res) => {
   const validation = new Validator(req.body, {
@@ -179,6 +213,12 @@ router.post("/createQAProcess", [auth.isAuthorized], async (req, res) => {
     return res.json({ status: "error", success: false, message: helper.firstErrorValidatorjs(valid) });
   }
 
+  const sfgCheck = await validateSfgSkus(req.body.sfg_sku, req.body.process.length);
+
+  if (sfgCheck.error) {
+    return res.json({ status: "error", success: false, message: sfgCheck.error });
+  }
+
   const stmt_validate = await invtDB.query("SELECT * FROM qa_process WHERE qa_sku = :sku", {
     replacements: { sku: req.body.sku },
     type: invtDB.QueryTypes.SELECT,
@@ -216,7 +256,7 @@ router.post("/createQAProcess", [auth.isAuthorized], async (req, res) => {
         {
           replacements: {
             sku: sku,
-            sfg_sku: req.body.sfg_sku[i],
+            sfg_sku: sfgCheck.skus[i],
             subject: Subject ? req.body.subject[i] : "--",
             process: process,
             processLevel: processLevel,
@@ -313,10 +353,18 @@ router.post("/fetchQAProcess", [auth.isAuthorized], async (req, res) => {
 router.post("/updateMappedQAProcess", [auth.isAuthorized], async (req, res) => {
   const valid = new Validator(req.body, {
     sku: "required",
+    sfg_sku: "required|array",
+    process: "required|array",
   });
 
   if (valid.fails()) {
-    return res.json({ status: "error", success: false, message: "Please provide sku" });
+    return res.json({ status: "error", success: false, message: helper.firstErrorValidatorjs(valid) });
+  }
+
+  const sfgCheck = await validateSfgSkus(req.body.sfg_sku, req.body.process.length);
+
+  if (sfgCheck.error) {
+    return res.json({ status: "error", success: false, message: sfgCheck.error });
   }
 
   const transaction = await invtDB.transaction();
@@ -341,7 +389,7 @@ router.post("/updateMappedQAProcess", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               sku: req.body.sku,
-              sfg_sku: req.body.sfg_sku[i],
+              sfg_sku: sfgCheck.skus[i],
               qaProcessKey: helper.getUniqueNumber(),
               subject: Subject ? req.body.subject[i] : "--",
               bomRequired: req.body.bomRequired[i],
@@ -372,7 +420,7 @@ router.post("/updateMappedQAProcess", [auth.isAuthorized], async (req, res) => {
             replacements: {
               sku: req.body.sku,
               qaProcessKey,
-              sfg_sku: req.body.sfg_sku[i],
+              sfg_sku: sfgCheck.skus[i],
               subject: Subject ? req.body.subject[i] : "--",
               bomRequired: req.body.bomRequired[i],
               process: req.body.process[i],

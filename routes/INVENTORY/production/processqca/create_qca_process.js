@@ -1073,494 +1073,6 @@ router.post("/getQAProcesses", [auth.isAuthorized], async (req, res) => {
 });
 
 //Lot transfer and update lot no
-// router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
-//   const validation = new Validator(req.body, {
-//     qca_barcode: "required",
-//     skucode: "required",
-//     ppr_transaction: "required",
-//     process: "required",
-//   });
-
-//   if (validation.fails()) {
-//     return res.status(500).send({ success: false, message: helper.firstErrorValidatorjs(validation) });
-//   }
-
-//   let lot_no = helper.getUniqueNumber();
-
-//   const transaction = await invtDB.transaction();
-//   try {
-//     //Get Locations, Lot size
-//     const stmt2 = await invtDB.query(
-//       "SELECT process_name,  qa_sfg_sku, qa_subject, bom_required, lot_size, process_loc, process_pass_loc, process_fail_loc FROM qa_process LEFT JOIN qa_process_master ON qa_process.qa_process = qa_process_master.process_key WHERE qa_process = :process AND qa_sku = :sku ",
-//       {
-//         replacements: { process: req.body.process, sku: req.body.skucode },
-//         type: invtDB.QueryTypes.SELECT,
-//       }
-//     );
-
-//     let bom_required = stmt2[0].bom_required;
-//     let process_name = stmt2[0].process_name;
-//     let sku_sfg = stmt2[0].qa_sfg_sku;
-//     // If qa_sfg_sku is empty/null, use the actual skucode from request
-//     if (!sku_sfg || sku_sfg.trim() === '') {
-//       sku_sfg = req.body.skucode;
-//     }
-//     let bom_id = stmt2[0].qa_subject;
-//     let Lot_size = stmt2[0].lot_size;
-
-//     //Update Lot NO.
-//     const updateResult = await invtDB.query("UPDATE qca SET lot_no = :lotNo WHERE qca_barcode IN (:qca_barcode) AND qca_result = :result AND qca_process = :process", {
-//       replacements: { lotNo: lot_no, qca_barcode: req.body.qca_barcode, result: req.body.result, process: req.body.process },
-//       type: invtDB.QueryTypes.UPDATE,
-//       transaction: transaction,
-//     });
-
-//     let consump_Loc = stmt2[0].process_loc;
-
-//     let send_Loc;
-//     if (req.body.result == "PASS") {
-//       send_Loc = stmt2[0].process_pass_loc;
-//     } else {
-//       send_Loc = stmt2[0].process_fail_loc;
-//     }
-
-//     let lot_qty = req.body.qca_barcode.length;
-
-//     if (lot_qty > Lot_size) {
-//       await transaction.rollback();
-//       return res.status(500).json({ success: false, message: `Lot Quantity will not more than ${Lot_size}` });
-//     }
-
-//     //Check Maximum Consumption quantity
-//     let stmt = await invtDB.query(
-//       "SELECT mfg_production_1.ppr_randomcode,mfg_production_1.prod_transaction, mfg_production_1.prod_planned_qty, bom_quantity.product_sku FROM bom_quantity LEFT JOIN bom_recipe ON bom_quantity.subject_under = bom_recipe.subject_id LEFT JOIN mfg_production_1 ON bom_quantity.product_sku = mfg_production_1.prod_product_sku LEFT JOIN location_main ON mfg_production_1.prod_location = location_main.location_key WHERE bom_quantity.product_sku = :sku AND mfg_production_1.prod_transaction = :req AND mfg_production_1.ppr_randomcode = :access AND mfg_production_1.prod_branch = :branch GROUP BY bom_recipe.subject_name ORDER BY bom_recipe.subject_name ASC",
-//       {
-//         replacements: {
-//           sku: req.body.skucode,
-//           req: req.body.ppr_transaction,
-//           access: req.body.accesstoken,
-//           branch: req.branch,
-//         },
-//         type: invtDB.QueryTypes.SELECT,
-//       }
-//     );
-
-//     let MaxConsumptQtyis = 0;
-//     if (stmt.length > 0) {
-//       for (let i = 0; i < stmt.length; i++) {
-//         let row = stmt[i];
-
-//         let stmt0 = await invtDB.query(
-//           "SELECT COALESCE(SUM(mfg_prod_planing_qty),0) AS totalYetConsupted, mfg_sku,mfg_ref_id FROM mfg_production_2 WHERE mfg_sku = :sku AND mfg_ref_id = :req AND ppr_randomcode = :access AND mfg_production_2.mfg_prod_type = 'C'",
-//           {
-//             replacements: {
-//               sku: sku_sfg,
-//               req: req.body.ppr_transaction,
-//               access: req.body.accesstoken,
-//             },
-//             type: invtDB.QueryTypes.SELECT,
-//           }
-//         );
-//         if (stmt0.length > 0) {
-//           MaxConsumptQtyis = helper.number(row.prod_planned_qty) - helper.number(stmt0[0].totalYetConsupted);
-//           if (helper.number(MaxConsumptQtyis) < helper.number(lot_qty)) {
-//             await transaction.rollback();
-//             return res.status(500).json({ success: false, message: "executing QTY is can't be accept" });
-//           }
-//         }
-//       }
-//     } else {
-//       await transaction.rollback();
-//       return res.status(500).json({ success: false, message: "something happend wrong" });
-//     }
-
-//     let stmt1 = await invtDB.query(
-//       "SELECT * FROM mfg_production_1 WHERE ppr_randomcode = :accesstoken AND prod_transaction = :transaction AND prod_product_sku = :sku AND phase1_status = 'A' AND mfg_production_1.prod_branch = :branch",
-//       {
-//         replacements: {
-//           sku: req.body.skucode,
-//           transaction: req.body.ppr_transaction,
-//           accesstoken: req.body.accesstoken,
-//           branch: req.branch,
-//         },
-//         type: invtDB.QueryTypes.SELECT,
-//       }
-//     );
-
-//     if (stmt1.length > 0) {
-//       let mfg_transaction;
-//       let getNumber = await invtDB.query("SELECT * FROM ims_numbering WHERE for_number = 'MFG' FOR UPDATE", {
-//         type: invtDB.QueryTypes.SELECT,
-//         transaction: transaction,
-//       });
-
-//       mfg_transaction = stmt2[0].mfg_transaction;
-//       if (getNumber.length > 0) {
-//         var suffix = getNumber[0].suffix;
-//         suffix = parseInt(suffix) + 1;
-//         suffix = suffix.toString();
-//         suffix = suffix.padStart(parseInt(getNumber[0].number_length_limit), "0");
-
-//         mfg_transaction = getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
-//       } else {
-//         let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
-//         mfg_transaction = "MFG/" + currYear + "-" + (currYear + 1) + "/0001";
-//       }
-
-//       await invtDB.query("UPDATE ims_numbering SET suffix = suffix+1 WHERE for_number= 'MFG'", {
-//         type: invtDB.QueryTypes.UPDATE,
-//         transaction: transaction,
-//       });
-
-//       let stmt3 = await invtDB.query("SELECT * FROM mfg_production_2 WHERE mfg_ref_id = :pprid AND mfg_sku = :sku ORDER BY ID DESC LIMIT 1", {
-//         replacements: {
-//           pprid: req.body.ppr_transaction,
-//           sku: sku_sfg,
-//         },
-//         type: invtDB.QueryTypes.SELECT,
-//       });
-
-//       let stepcount;
-//       if (stmt3.length > 0) {
-//         stepcount = helper.number(stmt3[0].step_count) + 1;
-//       } else {
-//         stepcount = 1;
-//       }
-
-//       let pprcreatedBY;
-//       let stmt4 = await invtDB.query("SELECT * FROM mfg_production_1 WHERE prod_product_sku = :sku AND prod_transaction = :pprid ORDER BY ID DESC LIMIT 1", {
-//         replacements: {
-//           pprid: req.body.ppr_transaction,
-//           sku: req.body.skucode,
-//         },
-//         type: invtDB.QueryTypes.SELECT,
-//       });
-//       if (stmt4.length > 0) {
-//         pprcreatedBY = stmt4[0].prod_inserted_by;
-//       } else {
-//         pprcreatedBY = "--";
-//       }
-
-//       //Get SKU type
-//       // If sku_sfg is empty/null, use req.body.skucode instead
-//       let sku_to_query = sku_sfg && sku_sfg.trim() !== '' ? sku_sfg : req.body.skucode;
-//       let skutype = await invtDB.query("SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg ", {
-//         replacements: { skusfg: sku_to_query },
-//         type: invtDB.QueryTypes.SELECT,
-//       });
-
-//       let sku_type;
-
-//       if (skutype.length == 0) {
-//         sku_type = "SFG";
-//       } else {
-//         if (skutype[0].bom_recipe_type == "default") {
-//           sku_type = "FG";
-//         } else {
-//           sku_type = "SFG";
-//         }
-//       }
-
-//       let insertDate = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
-
-//       let productAvgRate = 0;
-
-//       if (bom_required == "YES") {
-//         let stmt1 = await invtDB.query(
-//           "INSERT INTO mfg_production_2 (company_branch,mfg_prod_planing_qty,mfg_sku,mfg_sku_type,mfg_send_location,mfg_con_location,mfg_comment,mfg_insert_date,mfg_full_date,mfg_approved_by,mfg_transaction,mfg_ref_id,step_count,mfg_prod_type,mfg_ppr_created_by,ppr_randomcode,from_module) VALUES (:branch,:lot_qty,:sku,:sku_type,:sendLoc,:conLoc,:comment,:insertdate,:fulldate,:by,:transaction,:ref,:count,:type,:pprinsertedby,:random,'QCA')",
-//           {
-//             replacements: {
-//               branch: req.branch,
-//               lot_qty: lot_qty,
-//               sku: sku_sfg,
-//               sku_type: sku_type,
-//               sendLoc: send_Loc,
-//               conLoc: consump_Loc,
-//               comment: "--",
-//               insertdate: moment(new Date()).format("YYYY-MM-DD"),
-//               fulldate: insertDate,
-//               by: req.logedINUser,
-//               transaction: mfg_transaction,
-//               ref: req.body.ppr_transaction,
-//               count: stepcount,
-//               type: "C",
-//               pprinsertedby: pprcreatedBY,
-//               random: req.body.accesstoken,
-//             },
-//             type: invtDB.QueryTypes.INSERT,
-//             transaction: transaction,
-//           }
-//         );
-
-//         //INSERT DATA INTO MFG_PRODUCTION_3
-//         let stmt_insert = await invtDB.query(
-//           "INSERT INTO mfg_production_3 (company_branch, mfg_pro_apr_sku, mfg_approve_in_qty, mfg_pro_location_in, mfg_pro_apr_by, ppr_created_by,  mfg_pro_apr_date, mfgphase2_insert_date, mfg_pro_apr_fulldate, mfg_ref_transid_1, mfg_ref_transid_2, type) VALUES (:branch, :sku, :lot_qty, :location, :approved_by, :created_by, :apr_date, :insert_date, :full_date, :ppr_no, :mfg_id, 'IN')",
-//           {
-//             replacements: {
-//               branch: req.branch,
-//               sku: sku_sfg,
-//               lot_qty: lot_qty,
-//               location: send_Loc,
-//               approved_by: req.logedINUser,
-//               created_by: pprcreatedBY,
-//               apr_date: moment(new Date()).format("YYYY-MM-DD"),
-//               full_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
-//               insert_date: insertDate,
-//               ppr_no: req.body.ppr_transaction,
-//               mfg_id: mfg_transaction,
-//             },
-//             type: invtDB.QueryTypes.INSERT,
-//             transaction: transaction,
-//           }
-//         );
-
-//         //Insert data into rm_location
-//         if (stmt1.length > 0) {
-//           let stmt3 = await invtDB.query("SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ", {
-//             replacements: { bomid: bom_id },
-//             type: invtDB.QueryTypes.SELECT,
-//           });
-
-//           for (let i = 0; i < stmt3.length; i++) {
-//             let consumption_quantity = lot_qty * stmt3[i].qty;
-//             let component = stmt3[i].component_id;
-
-//             //
-
-//             const avagRate = await require("../../../../helper/utils/avgRate").getWeightedPurchaseRate(component, moment(new Date()).format("YYYY-MM-DD HH:mm:ss"));
-
-//             productAvgRate += avagRate * stmt3[i].qty;
-
-//             // console.log(avagRate * stmt3[i].qty ,  avagRate ,  stmt3[i].qty , "----------------------------")
-
-//             //
-
-//             if (helper.number(consumption_quantity) > 0) {
-//               let comp_stmt = await invtDB.query(
-//                 "INSERT INTO rm_location (company_branch,trans_type,components_id,qty,mfg_bom_qty,loc_out,insert_date,insert_by,mfg_ppr_trans_id_1,mfg_ppr_trans_id_2,mfg_step_count,bom_subject_id,any_remark) VALUES(:branch, 'CONSUMPTION', :component, :qty, :bom_qty, :loc_out, :insert_date, :insert_by, :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark)",
-//                 {
-//                   replacements: {
-//                     branch: req.branch,
-//                     component: stmt3[i].component_id,
-//                     qty: consumption_quantity,
-//                     bom_qty: stmt3[i].qty,
-//                     loc_out: consump_Loc,
-//                     insert_date: insertDate,
-//                     insert_by: req.logedINUser,
-//                     mfg_id_1: req.body.ppr_transaction,
-//                     mfg_id_2: mfg_transaction,
-//                     step_count: stepcount,
-//                     subject: bom_id,
-//                     remark: "--",
-//                   },
-//                   type: invtDB.QueryTypes.INSERT,
-//                   transaction: transaction,
-//                 }
-//               );
-
-//               // ALL INWARD
-//               let component_qty_yet_in_location;
-//               let stmt6 = await invtDB.query(
-//                 "SELECT COALESCE(SUM(qty+other_qty), 0) AS Inward FROM rm_location WHERE components_id = :component AND loc_in = :location AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER')",
-//                 {
-//                   replacements: {
-//                     component: stmt3[i].component_id,
-//                     location: consump_Loc,
-//                     branch: req.branch,
-//                   },
-//                   type: invtDB.QueryTypes.SELECT,
-//                 }
-//               );
-//               if (stmt6.length > 0) {
-//                 component_qty_yet_in_location = helper.number(stmt6[0].Inward);
-//               } else {
-//                 component_qty_yet_in_location = 0;
-//               }
-
-//               // ALL OUTWARD
-//               let component_qty_yet_out_location;
-//               let stmt7 = await invtDB.query(
-//                 "SELECT COALESCE(SUM(qty+other_qty), 0) AS Outward FROM rm_location WHERE components_id = :component AND loc_out = :location AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER')",
-//                 {
-//                   replacements: {
-//                     component: stmt3[i].component_id,
-//                     location: consump_Loc,
-//                     branch: req.branch,
-//                   },
-//                   type: invtDB.QueryTypes.SELECT,
-//                 }
-//               );
-
-//               if (stmt7.length > 0) {
-//                 component_qty_yet_out_location = helper.number(stmt7[0].Outward);
-//               } else {
-//                 component_qty_yet_out_location = 0;
-//               }
-
-//               if (helper.number(component_qty_yet_in_location - component_qty_yet_out_location) >= helper.number(consumption_quantity)) {
-//               } else {
-//                 const stmt = await invtDB.query("SELECT c_name , c_part_no FROM components WHERE component_key = :component", {
-//                   replacements: { component: component },
-//                   type: invtDB.QueryTypes.SELECT,
-//                 });
-
-//                 let component_name = stmt[0].c_part_no;
-
-//                 await transaction.rollback();
-//                 return res.status(500).json({
-//                   message: `${component_qty_yet_in_location} / ${component_qty_yet_out_location} Attention: Some of the components ${component_name} are not available at the pick location`,
-//                   success: false,
-//                 });
-//               }
-//             }
-//           }
-//         }
-//       }
-//       //Update Execution quantity
-//       let stmt8 = await invtDB.query("UPDATE mfg_production_1 SET prod_executed_qty= prod_executed_qty + :execute_qty WHERE prod_product_sku = :skucode AND prod_transaction = :ppr", {
-//         replacements: { execute_qty: lot_qty, skucode: req.body.skucode, ppr: req.body.ppr_transaction },
-//         type: invtDB.QueryTypes.UPDATE,
-//         transaction: transaction,
-//       });
-//       if (stmt8.length > 0) {
-//         // Get sku_sfg req.body.skucode
-//         // AUTO TRASFER ONLY FOR SFG TO COMPONENT
-//         if (sku_type == "SFG") {
-//           // If skutype is empty, query bom_recipe using req.body.skucode
-//           let sfg_mapped_rm_value;
-//           if (skutype.length > 0 && skutype[0].sfg_mapped_rm) {
-//             sfg_mapped_rm_value = skutype[0].sfg_mapped_rm;
-//           } else {
-//             // Query bom_recipe using the actual skucode from request
-//             let skutype_fallback = await invtDB.query("SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg LIMIT 1", {
-//               replacements: { skusfg: req.body.skucode },
-//               type: invtDB.QueryTypes.SELECT,
-//             });
-//             if (skutype_fallback.length > 0 && skutype_fallback[0].sfg_mapped_rm) {
-//               sfg_mapped_rm_value = skutype_fallback[0].sfg_mapped_rm;
-//             } else {
-//               await transaction.rollback();
-//               return res.status(500).json({ success: false, message: "SFG mapped RM not found in bom_recipe for SKU: " + req.body.skucode });
-//             }
-//           }
-//           // const stmt4 = await invtDB.query("SELECT component_key FROM components WHERE c_part_no = :component", {
-//           const stmt4 = await invtDB.query("SELECT component_key FROM components WHERE component_key = :component", {
-//             // replacements: { component: sku_sfg },
-//             replacements: { component: sfg_mapped_rm_value },
-//             type: invtDB.QueryTypes.SELECT,
-//           });
-
-//           if (stmt4.length <= 0) {
-//             await transaction.rollback();
-//             return res.status(500).json({ success: false, message: "This SFG is not present in component data" });
-//           }
-//           let transactionID;
-//           let stmt = await invtDB.query("SELECT * FROM `ims_numbering` WHERE `for_number` = 'GODOWN_TRANSFER' FOR UPDATE", { type: invtDB.QueryTypes.SELECT, transaction: transaction });
-
-//           if (stmt.length > 0) {
-//             var suffix = stmt[0].suffix;
-//             suffix = helper.number(suffix) + 1;
-//             suffix = suffix.toString();
-//             suffix = suffix.padStart(helper.number(stmt[0].number_length_limit), "0");
-//             transactionID = stmt[0].prefix + "/" + stmt[0].session + "/" + suffix;
-//           } else {
-//             let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
-//             transactionID = "IGA/" + currYear + "-" + (currYear + 1) + "/0001";
-//           }
-
-//           // CREATE NEW SFG AS COMPONENT
-//           let getNumber = await invtDB.query("SELECT * FROM `ims_numbering` WHERE `for_number` = 'QCA' FOR UPDATE", {
-//             type: invtDB.QueryTypes.SELECT,
-//             transaction: transaction,
-//           });
-//           var in_txn_no;
-
-//           if (getNumber.length > 0) {
-//             var suffix = getNumber[0].suffix;
-//             suffix = parseInt(suffix) + 1;
-//             suffix = suffix.toString();
-//             suffix = suffix.padStart(parseInt(getNumber[0].number_length_limit), "0");
-
-//             in_txn_no = getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
-//           } else {
-//             let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
-//             in_txn_no = "QCA/" + currYear + "-" + (currYear + 1) + "/0001";
-//           }
-
-//           await invtDB.query("UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'QCA'", {
-//             type: invtDB.QueryTypes.UPDATE,
-//             transaction: transaction,
-//           });
-
-//           let stmt_new_comp = await invtDB.query(
-//             "INSERT INTO rm_location (in_module,company_branch,components_id,qty,loc_in,any_remark,insert_date,insert_by,in_transaction_id, in_po_rate) VALUES ('IN-QCA',:branch,:component,:qty,:loc_in,:remark,:insert_date,:insert_by,:in_transaction_id, :in_po_rate)",
-//             {
-//               replacements: {
-//                 branch: req.branch,
-//                 component: stmt4[0].component_key,
-//                 qty: lot_qty,
-//                 in_po_rate: productAvgRate,
-//                 loc_in: send_Loc,
-//                 in_transaction_id: in_txn_no,
-//                 remark: "Process MIN",
-//                 insert_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
-//                 insert_by: req.logedINUser,
-//               },
-//               type: invtDB.QueryTypes.INSERT,
-//               transaction: transaction,
-//             }
-//           );
-//           // MIN DONE
-
-//           //Auto transfer
-//           let stmt1 = await invtDB.query(
-//             "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`)VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
-//             {
-//               replacements: {
-//                 branch: req.branch,
-//                 component: stmt4[0].component_key,
-//                 qty: lot_qty,
-//                 loc_in: send_Loc,
-//                 loc_out: consump_Loc,
-//                 remark: "Auto Transfer",
-//                 insert_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
-//                 insert_by: req.logedINUser,
-//                 transfer_transaction_id: transactionID,
-//               },
-//               type: invtDB.QueryTypes.INSERT,
-//               transaction: transaction,
-//             }
-//           );
-
-//           if (stmt1.length <= 0) {
-//             await transaction.rollback();
-//             return res.status(500).json({ success: false, message: "an error by shifting the SFG to the location" });
-//           }
-//         }
-//         // END AUTO TRANSFER ONLY FOR SFG TO COMPONENT
-
-//         await transaction.commit();
-//         return res.status(200).json({
-//           success: true,
-//           Lot_No: lot_no,
-//           Lot_Qty: lot_qty,
-//           PPR_No: req.body.ppr_transaction,
-//           SKU: req.body.skucode,
-//           Lot_type: req.body.result,
-//           Process: process_name,
-//           message: "Lot Transfer Successfully",
-//         });
-//       } else {
-//         await transaction.rollback();
-//         return res.status(500).json({ success: false, message: "an error occured while updating your request" });
-//       }
-//     }
-//   } catch (err) {
-//     console.log(err);
-//     await transaction.rollback();
-//     return res.status(500).json({ message: "Internal Error<br/>If this condition persists, contact your system administrator", success: false, error: err.stack });
-//   }
-// });
 router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
   const validation = new Validator(req.body, {
     qca_barcode: "required",
@@ -1570,13 +1082,18 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
   });
 
   if (validation.fails()) {
-    return res.json({ success: false, status: "error", message: helper.firstErrorValidatorjs(validation) });
+    return res.json({
+      success: false,
+      status: "error",
+      message: helper.firstErrorValidatorjs(validation),
+    });
   }
 
   let lot_no = helper.getUniqueNumber();
 
   const transaction = await invtDB.transaction();
   try {
+    //Get Locations, Lot size
     const stmt2 = await invtDB.query(
       "SELECT process_name,  qa_sfg_sku, qa_subject, bom_required, lot_size, process_loc, process_pass_loc, process_fail_loc FROM qa_process LEFT JOIN qa_process_master ON qa_process.qa_process = qa_process_master.process_key WHERE qa_process = :process AND qa_sku = :sku ",
       {
@@ -1591,7 +1108,8 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
     let bom_id = stmt2[0].qa_subject;
     let Lot_size = stmt2[0].lot_size;
 
-    await invtDB.query(
+    //Update Lot NO.
+    const updateResult = await invtDB.query(
       "UPDATE qca SET lot_no = :lotNo WHERE qca_barcode IN (:qca_barcode) AND qca_result = :result AND qca_process = :process",
       {
         replacements: {
@@ -1618,9 +1136,14 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
     if (lot_qty > Lot_size) {
       await transaction.rollback();
-      return res.json({ success: false, status: "error", message: `Lot Quantity will not more than ${Lot_size}` });
+      return res.json({
+        success: false,
+        status: "error",
+        message: `Lot Quantity will not more than ${Lot_size}`,
+      });
     }
 
+    //Check Maximum Consumption quantity
     let stmt = await invtDB.query(
       "SELECT mfg_production_1.ppr_randomcode,mfg_production_1.prod_transaction, mfg_production_1.prod_planned_qty, bom_quantity.product_sku FROM bom_quantity LEFT JOIN bom_recipe ON bom_quantity.subject_under = bom_recipe.subject_id LEFT JOIN mfg_production_1 ON bom_quantity.product_sku = mfg_production_1.prod_product_sku LEFT JOIN location_main ON mfg_production_1.prod_location = location_main.location_key WHERE bom_quantity.product_sku = :sku AND mfg_production_1.prod_transaction = :req AND mfg_production_1.ppr_randomcode = :access AND mfg_production_1.prod_branch = :branch GROUP BY bom_recipe.subject_name ORDER BY bom_recipe.subject_name ASC",
       {
@@ -1628,7 +1151,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           req: req.body.ppr_transaction,
           access: req.body.accesstoken,
-          branch: "BRMSC012",
+          branch: "BRALWR36",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1656,13 +1179,21 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             helper.number(stmt0[0].totalYetConsupted);
           if (helper.number(MaxConsumptQtyis) < helper.number(lot_qty)) {
             await transaction.rollback();
-            return res.json({ success: false, status: "error", message: "executing QTY is can't be accept" });
+            return res.json({
+              success: false,
+              status: "error",
+              message: "executing QTY is can't be accept",
+            });
           }
         }
       }
     } else {
       await transaction.rollback();
-      return res.json({ success: false, status: "error", message: "something happend wrong" });
+      return res.json({
+        success: false,
+        status: "error",
+        message: "something happend wrong",
+      });
     }
 
     let stmt1 = await invtDB.query(
@@ -1672,7 +1203,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           transaction: req.body.ppr_transaction,
           accesstoken: req.body.accesstoken,
-          branch: "BRMSC012",
+          branch: "BRALWR36",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1750,8 +1281,9 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
         pprcreatedBY = "--";
       }
 
+      //Get SKU type
       let skutype = await invtDB.query(
-        "SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg ",
+        "SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg",
         {
           replacements: { skusfg: sku_sfg },
           type: invtDB.QueryTypes.SELECT,
@@ -1770,10 +1302,6 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
         }
       }
 
-      let insertDate = moment(new Date())
-        .tz("Asia/Kolkata")
-        .format("YYYY-MM-DD HH:mm:ss");
-
       let productAvgRate = 0;
 
       if (bom_required == "YES") {
@@ -1782,7 +1310,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRMSC012",
+              branch: "BRALWR36",
               lot_qty: lot_qty,
               sku: sku_sfg,
               sku_type: sku_type,
@@ -1790,7 +1318,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               conLoc: consump_Loc,
               comment: "--",
               insertdate: moment(new Date()).format("YYYY-MM-DD"),
-              fulldate: insertDate,
+              fulldate: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
               by: req.logedINUser,
               transaction: mfg_transaction,
               ref: req.body.ppr_transaction,
@@ -1804,19 +1332,20 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           },
         );
 
-        await invtDB.query(
+        //INSERT DATA INTO MFG_PRODUCTION_3
+        let stmt_insert = await invtDB.query(
           "INSERT INTO mfg_production_3 (txn_session,company_branch, mfg_pro_apr_sku, mfg_approve_in_qty, mfg_pro_location_in, mfg_pro_apr_by, ppr_created_by, mfgphase2_insert_date, mfg_pro_apr_fulldate, mfg_ref_transid_1, mfg_ref_transid_2, type) VALUES (:txn_session,:branch, :sku, :lot_qty, :location, :approved_by, :created_by, :insert_date, :full_date, :ppr_no, :mfg_id, 'IN')",
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRMSC012",
+              branch: "BRALWR36",
               sku: sku_sfg,
               lot_qty: lot_qty,
               location: send_Loc,
               approved_by: req.logedINUser,
               created_by: pprcreatedBY,
               full_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
-              insert_date: insertDate,
+              insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
               ppr_no: req.body.ppr_transaction,
               mfg_id: mfg_transaction,
             },
@@ -1825,8 +1354,9 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           },
         );
 
+        //Insert data into rm_location
         if (stmt1.length > 0) {
-          const bomComponents = await invtDB.query(
+          let bomComponents = await invtDB.query(
             "SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ",
             {
               replacements: { bomid: bom_id },
@@ -1834,15 +1364,17 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             },
           );
 
+          // Pre-fetch avg rates + inward/outward for all components in parallel
           const componentData = await Promise.all(
             bomComponents.map(async (comp) => {
               const consumption_quantity = lot_qty * comp.qty;
 
               const [avgRate, inwardRows, outwardRows] = await Promise.all([
+                // require("../../../../helper/utils/avgRate")
+                //   .getWeightedPurchaseRate_May2026(comp.component_id),
                 require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
                   comp.component_id,
                 ),
-
                 // ALL INWARD at consumption location
                 invtDB.query(
                   `SELECT COALESCE(SUM(qty + other_qty), 0) AS Inward
@@ -1886,6 +1418,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             }),
           );
 
+          // ── 8. Stock validation then serial inserts (must stay serial — tx) ────
           for (const {
             comp,
             consumption_quantity,
@@ -1897,6 +1430,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
             if (helper.number(consumption_quantity) <= 0) continue;
 
+            // Stock check
             if (
               helper.number(inward - outward) <
               helper.number(consumption_quantity)
@@ -1920,31 +1454,33 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               });
             }
 
+            // Insert consumption into rm_location
             await invtDB.query(
               `INSERT INTO rm_location
              (txn_session, company_branch, trans_type, components_id, qty,
               mfg_bom_qty, loc_out, insert_date, insert_by,
               mfg_ppr_trans_id_1, mfg_ppr_trans_id_2, mfg_step_count,
-              bom_subject_id, any_remark)
+              bom_subject_id, any_remark, in_po_rate)
            VALUES
              (:txn_session, :branch, 'CONSUMPTION', :component, :qty,
               :bom_qty, :loc_out, :insert_date, :insert_by,
-              :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark)`,
+              :mfg_id_1, :mfg_id_2, :step_count, :subject, :remark, :in_po_rate)`,
               {
                 replacements: {
                   txn_session: helper.generateTxnSession(),
-                  branch: "BRMSC012",
+                  branch: "BRALWR36",
                   component: comp.component_id,
                   qty: consumption_quantity,
                   bom_qty: comp.qty,
                   loc_out: consump_Loc,
-                  insert_date: insertDate,
+                  insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
                   insert_by: req.logedINUser,
                   mfg_id_1: req.body.ppr_transaction,
                   mfg_id_2: mfg_transaction,
                   step_count: stepcount,
                   subject: bom_id,
                   remark: "--",
+                  in_po_rate: productAvgRate,
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction,
@@ -1953,6 +1489,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           }
         }
 
+        // ── 9. Update execution quantity ─────────────────────────────────────────
         const stmt8 = await invtDB.query(
           `UPDATE mfg_production_1
        SET    prod_executed_qty = prod_executed_qty + :execute_qty
@@ -1978,12 +1515,37 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           });
         }
 
+        // ── 10. Auto-transfer SFG → Component ───────────────────────────────────
         if (sku_type === "SFG") {
+          // skutype is empty when bom_recipe has no row for sku_sfg (e.g. qa_sfg_sku
+          // is blank), so fall back to the posted skucode before using the mapping.
+          let sfg_mapped_rm = skutype[0]?.sfg_mapped_rm;
+
+          if (!sfg_mapped_rm) {
+            const skutypeFallback = await invtDB.query(
+              "SELECT sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :sku LIMIT 1",
+              {
+                replacements: { sku: req.body.skucode },
+                type: invtDB.QueryTypes.SELECT,
+              },
+            );
+            sfg_mapped_rm = skutypeFallback[0]?.sfg_mapped_rm;
+          }
+
+          if (!sfg_mapped_rm) {
+            await transaction.rollback();
+            return res.json({
+              status: "error",
+              success: false,
+              message: `No mapped RM found for SFG ${req.body.skucode}. Please map an RM against this SFG in the BOM recipe.`,
+            });
+          }
+
           const [sfgComp, godownTxnRow, qcaNumberRow] = await Promise.all([
             invtDB.query(
               `SELECT component_key FROM components WHERE component_key = :component`,
               {
-                replacements: { component: skutype[0].sfg_mapped_rm },
+                replacements: { component: sfg_mapped_rm },
                 type: invtDB.QueryTypes.SELECT,
               },
             ),
@@ -2006,6 +1568,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             });
           }
 
+          // Build GODOWN_TRANSFER transaction ID
           let transactionID;
           if (godownTxnRow.length > 0) {
             const suffix = (helper.number(godownTxnRow[0].suffix) + 1)
@@ -2022,6 +1585,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             transactionID = `IGA/${currYear}-${currYear + 1}/0001`;
           }
 
+          // CREATE NEW SFG AS COMPONENT
           let getNumber = await invtDB.query(
             "SELECT * FROM `ims_numbering` WHERE `for_number` = 'QCA' FOR UPDATE",
             {
@@ -2057,12 +1621,12 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             },
           );
 
-          await invtDB.query(
+          let stmt_new_comp = await invtDB.query(
             "INSERT INTO rm_location (txn_session,in_module,company_branch,components_id,qty,loc_in,any_remark,insert_date,insert_by,in_transaction_id, in_po_rate) VALUES (:txn_session,'IN-QCA',:branch,:component,:qty,:loc_in,:remark,:insert_date,:insert_by,:in_transaction_id, :in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRMSC012",
+                branch: "BRALWR36",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 in_po_rate: productAvgRate,
@@ -2076,14 +1640,15 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               transaction: transaction,
             },
           );
+          // MIN DONE
 
-
+          //Auto transfer
           let stmt1 = await invtDB.query(
-            "INSERT INTO `rm_location` (`txn_session`,`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`)VALUES (:txn_session,'IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
+            "INSERT INTO `rm_location` (`txn_session`,`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`, in_po_rate)VALUES (:txn_session,'IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id, :in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRMSC012",
+                branch: "BRALWR36",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 loc_in: send_Loc,
@@ -2092,6 +1657,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
                 insert_date: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
                 insert_by: req.logedINUser,
                 transfer_transaction_id: transactionID,
+                in_po_rate: productAvgRate,
               },
               type: invtDB.QueryTypes.INSERT,
               transaction: transaction,
@@ -2100,25 +1666,34 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
           if (stmt1.length <= 0) {
             await transaction.rollback();
-            return res.json({ success: false, status: "error", message: "an error by shifting the SFG to the location" });
+            return res.json({
+              success: false,
+              status: "error",
+              message: "an error by shifting the SFG to the location",
+            });
           }
         }
+        // END AUTO TRANSFER ONLY FOR SFG TO COMPONENT
 
         await transaction.commit();
         return res.json({
-          data: {
-            Lot_No: lot_no,
-            Lot_Qty: lot_qty,
-            PPR_No: req.body.ppr_transaction,
-            SKU: req.body.skucode,
-            Lot_type: req.body.result,
-            Process: process_name,
-          },
-          success: true, status: "success", message: "Lot Transfer Successfully",
+          success: true,
+          status: "success",
+          Lot_No: lot_no,
+          Lot_Qty: lot_qty,
+          PPR_No: req.body.ppr_transaction,
+          SKU: req.body.skucode,
+          Lot_type: req.body.result,
+          Process: process_name,
+          message: "Lot Transfer Successfully",
         });
       } else {
         await transaction.rollback();
-        return res.json({ success: false, status: "error", message: "an error occured while updating your request" });
+        return res.json({
+          success: false,
+          status: "error",
+          message: "an error occured while updating your request",
+        });
       }
     }
   } catch (err) {
