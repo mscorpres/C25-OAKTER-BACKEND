@@ -117,10 +117,12 @@ router.post("/createFGOUT", [auth.isAuthorized, auth.checkDuplicacy_db], async (
       {
         product: req.body.product[i],
         qty: helper.number(req.body.qty[i]),
+        location: req.body.location[i],
       },
       {
         product: "required",
         qty: "required|min:1",
+        location: "required",
       }
     );
     if (validation.fails()) {
