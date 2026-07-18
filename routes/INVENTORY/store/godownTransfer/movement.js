@@ -2228,6 +2228,7 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
     tolocation: "required|array",
     qty: "required|array",
     comments: "required|array",
+    rate: "required|array",
   });
 
   if (validation.fails()) {
@@ -2295,7 +2296,7 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
           : "--";
 
       let stmt1 = await invtDB.query(
-        "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`) VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
+        "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`,in_po_rate) VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id, :rate)",
         {
           replacements: {
             branch: req.branch,
@@ -2307,6 +2308,7 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
             insert_date: insertDt,
             insert_by: req.logedINUser,
             transfer_transaction_id: transactionID,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
@@ -3095,6 +3097,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
     component: "required|array",
     tolocation: "required|array",
     qty: "required|array",
+    rate: "required|array",
     comments: "required|array", // Added validation for comments array
   });
 
@@ -3112,13 +3115,14 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
   if (
     req.body.tolocation.length !== componentLength ||
     req.body.qty.length !== componentLength ||
+    req.body.rate.length !== componentLength ||
     req.body.comments.length !== componentLength
   ) {
     return res.json({
       status: "error",
       success: false,
       message:
-        "Component, tolocation, qty, and comments arrays must have the same length.",
+        "Component, tolocation, qty, rate, and comments arrays must have the same length.",
     });
   }
 
@@ -3187,7 +3191,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
 
       // Insert into rm_location with individual comment
       let stmt1 = await invtDB.query(
-        "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`) VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id)",
+        "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`, in_po_rate) VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id, :rate)",
         {
           replacements: {
             branch: req.branch,
@@ -3199,6 +3203,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
             insert_date: insertDt,
             insert_by: req.logedINUser,
             transfer_transaction_id: transactionID,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
