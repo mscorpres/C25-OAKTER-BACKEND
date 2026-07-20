@@ -4483,8 +4483,24 @@ router.post(
 
         /* 🔹 AUTO CONSUMPTION ISSUE (ORIGINAL LOGIC) */
         if (req.body.out_location[i] !== "0") {
+          const { rate: existingWAR, qty: existingQty } =
+            await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRateWithStock(
+              componentId,
+            );
+
+          const thisQty = helper.number(req.body.qty[i]);
+          const thisRate = helper.number(req.body.rate[i]);
+          const totalQty = existingQty + thisQty;
+
+          const autoConsumpRate = parseFloat(
+            (totalQty > 0
+              ? (existingQty * existingWAR + thisQty * thisRate) / totalQty
+              : thisRate
+            ).toFixed(10),
+          );
+
           await invtDB.query(
-            "INSERT INTO `rm_location` (`txn_session`,`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`transfer_transaction_id`,`out_transaction_id`,`is_auto_cons`,`any_remark`)VALUES (:txn_session,:branch,:type,:component,:loc_in,:loc_out,:qty,:indate,:inby,:transaction_id,:out_transaction_id,'Y',:comment)",
+            "INSERT INTO `rm_location` (`txn_session`,`company_branch`,`trans_type`,`components_id`,`loc_in`,`loc_out`,`qty`,`insert_date`,`insert_by`,`transfer_transaction_id`,`out_transaction_id`,`is_auto_cons`,`any_remark`,`in_po_rate`)VALUES (:txn_session,:branch,:type,:component,:loc_in,:loc_out,:qty,:indate,:inby,:transaction_id,:out_transaction_id,'Y',:comment,:in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
@@ -4501,6 +4517,7 @@ router.post(
                 transaction_id: in_txn_no,
                 out_transaction_id: out_txn_no,
                 comment: req.body.remark[i] == "" ? "--" : req.body.remark[i],
+                in_po_rate: autoConsumpRate,
               },
               type: invtDB.QueryTypes.INSERT,
               transaction: transaction,
