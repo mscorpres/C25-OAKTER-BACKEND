@@ -462,7 +462,7 @@ router.get("/listBranchTransfer", [auth.isAuthorized], async (req, res) => {
 
 
 // LIST INCOMING BRANCH TRANSFERS FROM SOURCE BRANCH SOFTWARE, WITH LOCAL PENDING/COMPLETED STATUS
-router.get("/incomingBranchTransferList", [auth.isAuthorized], async (req, res) => {
+router.get("/incomingBranchTransferList", async (req, res) => {
 
   try {
 
@@ -498,13 +498,11 @@ router.get("/incomingBranchTransferList", [auth.isAuthorized], async (req, res) 
 
     for (let i = 0; i < items.length; i++) {
 
-      // ONLY RETURN CHALLANS ALREADY PULLED AND INWARDED HERE (stock_status = 'COMPLETED') — PENDING ONES ARE SHOWN VIA OAKTER'S OWN LIST API
+      // A CHALLAN IS "Completed" ONCE IT HAS BEEN PULLED AND INWARDED HERE (stock_status = 'COMPLETED')
       const already_inward = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' AND stock_status = 'COMPLETED' LIMIT 1", {
         replacements: { trans_id: items[i].transId },
         type: invtDB.QueryTypes.SELECT
       });
-
-      if (already_inward.length == 0) continue;
 
       data.push({
         transId: items[i].transId,
@@ -517,12 +515,12 @@ router.get("/incomingBranchTransferList", [auth.isAuthorized], async (req, res) 
         vehicleNo: items[i].vehicleNo,
         narration: items[i].narration,
         insertDate: items[i].insertDate,
-        status: "Completed",
+        status: already_inward.length > 0 ? "Completed" : "Pending",
       });
     }
 
     if (data.length == 0) {
-      return res.json({ status: "error", success: false, message: "No completed branch transfer found for the selected date range" });
+      return res.json({ status: "error", success: false, message: "No record found for the selected date range" });
     }
 
     return res.json({ status: "success", success: true, data: data });
