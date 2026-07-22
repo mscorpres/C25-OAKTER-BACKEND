@@ -532,8 +532,8 @@ router.get("/incomingBranchTransferList", async (req, res) => {
 
 });
 
-// DETAILS OF AN ALREADY-COMPLETED INCOMING BRANCH TRANSFER (LOCAL rm_location DATA)
-router.get("/incomingBranchTransferDetails", async (req, res) => {
+// DETAILS OF AN INCOMING BRANCH TRANSFER — LOCAL rm_location DATA IF ALREADY COMPLETED, ELSE LIVE FROM SOURCE BRANCH SOFTWARE (PENDING)
+router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, res) => {
 
   try {
 
@@ -572,24 +572,61 @@ router.get("/incomingBranchTransferDetails", async (req, res) => {
       }
     );
 
-    if (stmt.length == 0) {
+    // ALREADY COMPLETED LOCALLY — RETURN OUR OWN rm_location DATA
+    if (stmt.length > 0) {
+      let data = [];
+
+      for (let i = 0; i < stmt.length; i++) {
+        data.push({
+          component: stmt[i].c_name,
+          part_no: stmt[i].c_part_no,
+          loc_in: stmt[i].loc_in_name,
+          loc_out: stmt[i].loc_out_name,
+          qty: stmt[i].qty,
+          rate: stmt[i].in_po_rate,
+          vendor_code: stmt[i].in_vendor_name,
+          remark: stmt[i].any_remark,
+          insert_date: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
+          status: stmt[i].stock_status,
+        });
+      }
+
+      return res.json({ status: "success", success: true, data: data });
+    }
+
+    // NOT YET PULLED — FETCH LIVE DETAILS FROM SOURCE BRANCH SOFTWARE
+    let remote_response;
+    try {
+      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/details", {
+        params: { trans_id: req.query.trans_id },
+      });
+    }
+    catch (err) {
+      console.error("incomingBranchTransferDetails remote fetch failed:", err.response ? err.response.data : err.message);
+      return res.json({ status: "error", success: false, message: "Unable to fetch data from source branch software", debug: process.env.NODE_ENV === 'development' ? (err.response ? err.response.data : err.message) : undefined });
+    }
+
+    const remote_data = remote_response.data;
+
+    if (!remote_data || !remote_data.success || !Array.isArray(remote_data.data) || remote_data.data.length == 0) {
       return res.json({ status: "error", success: false, message: "No Record Found" });
     }
 
+    const items = remote_data.data;
     let data = [];
 
-    for (let i = 0; i < stmt.length; i++) {
+    for (let i = 0; i < items.length; i++) {
       data.push({
-        component: stmt[i].c_name,
-        part_no: stmt[i].c_part_no,
-        loc_in: stmt[i].loc_in_name,
-        loc_out: stmt[i].loc_out_name,
-        qty: stmt[i].qty,
-        rate: stmt[i].in_po_rate,
-        vendor_code: stmt[i].in_vendor_name,
-        remark: stmt[i].any_remark,
-        insert_date: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
-        status: stmt[i].stock_status,
+        component: items[i].componentName,
+        part_no: items[i].partNo,
+        loc_in: items[i].locInName,
+        loc_out: items[i].locOutName,
+        qty: items[i].qty,
+        rate: items[i].rate,
+        vendor_code: items[i].vendorCode,
+        remark: items[i].remark,
+        insert_date: items[i].insertDate,
+        status: "INTRANSIT",
       });
     }
 
