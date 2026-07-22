@@ -510,11 +510,12 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
       let insert_dt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
       const items = remote_data.data;
 
-      for (let i = 0; i < items.length; i++) {
+      // ENSURE A LOCATION FROM THE REMOTE (OAKTER) RESPONSE EXISTS LOCALLY, ELSE CREATE IT WITH SAME KEY
+      const ensureLocation = async (location_key, loc_name) => {
+        if (!location_key) return;
 
-        // CHECK IF locIn LOCATION EXISTS LOCALLY, ELSE CREATE IT WITH SAME KEY
         const loc_exists = await invtDB.query("SELECT 1 FROM location_main WHERE location_key = :location_key LIMIT 1", {
-          replacements: { location_key: items[i].locInKey },
+          replacements: { location_key },
           type: invtDB.QueryTypes.SELECT,
           transaction: transaction,
         });
@@ -523,8 +524,8 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
           await invtDB.query("INSERT INTO location_main (company_branch, loc_name, location_key, insert_date, inserted_by) VALUES (:branch, :loc_name, :location_key, :insert_date, :inserted_by)", {
             replacements: {
               branch: req.branch,
-              loc_name: items[i].locInName ? items[i].locInName : "--",
-              location_key: items[i].locInKey,
+              loc_name: loc_name ? loc_name : "--",
+              location_key: location_key,
               insert_date: insert_dt,
               inserted_by: req.logedINUser,
             },
@@ -532,10 +533,17 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
             transaction: transaction,
           });
         }
-        // END CHECK LOCATION
+      };
+
+      for (let i = 0; i < items.length; i++) {
+
+        // CHECK PICK (loc_out) AND DROP (loc_in) LOCATIONS EXIST LOCALLY
+        await ensureLocation(items[i].locOutKey, items[i].locOutName);
+        await ensureLocation(items[i].locInKey, items[i].locInName);
+        // END CHECK LOCATIONS
 
         // INSERT RM LOCATION INWARD
-        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate)", {
+        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name)", {
           replacements: {
             branch: req.branch,
             type: "INWARD",
@@ -549,6 +557,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
             in_transaction_id: items[i].transId,
             stock_status: "INTRANSIT",
             in_po_rate: items[i].rate ? items[i].rate : 0,
+            in_vendor_name: items[i].vendorCode ? items[i].vendorCode : "--",
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: transaction,
