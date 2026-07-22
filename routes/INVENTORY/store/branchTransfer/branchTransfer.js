@@ -461,6 +461,149 @@ router.get("/listBranchTransfer", [auth.isAuthorized], async (req, res) => {
 });
 
 
+// LIST INCOMING BRANCH TRANSFERS FROM SOURCE BRANCH SOFTWARE, WITH LOCAL PENDING/COMPLETED STATUS
+router.get("/incomingBranchTransferList", [auth.isAuthorized], async (req, res) => {
+
+  try {
+
+    const valid = new Validator(req.query, {
+      from: "required",
+      to: "required",
+    });
+
+    if (valid.fails()) {
+      return res.json({ status: "error", success: false, message: "From and To dates are required!", data: valid.errors.all() });
+    }
+
+    // FETCH CHALLAN LIST FROM SOURCE BRANCH SOFTWARE
+    let remote_response;
+    try {
+      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/list", {
+        params: { from: req.query.from, to: req.query.to },
+      });
+    }
+    catch (err) {
+      console.error("incomingBranchTransferList remote fetch failed:", err.response ? err.response.data : err.message);
+      return res.json({ status: "error", success: false, message: "Unable to fetch data from source branch software", debug: process.env.NODE_ENV === 'development' ? (err.response ? err.response.data : err.message) : undefined });
+    }
+
+    const remote_data = remote_response.data;
+
+    if (!remote_data || !remote_data.success || !Array.isArray(remote_data.data) || remote_data.data.length == 0) {
+      return res.json({ status: "error", success: false, message: "No record found for the selected date range" });
+    }
+
+    const items = remote_data.data;
+    let data = [];
+
+    for (let i = 0; i < items.length; i++) {
+
+      // ONLY RETURN CHALLANS ALREADY PULLED AND INWARDED HERE (stock_status = 'COMPLETED') — PENDING ONES ARE SHOWN VIA OAKTER'S OWN LIST API
+      const already_inward = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' AND stock_status = 'COMPLETED' LIMIT 1", {
+        replacements: { trans_id: items[i].transId },
+        type: invtDB.QueryTypes.SELECT
+      });
+
+      if (already_inward.length == 0) continue;
+
+      data.push({
+        transId: items[i].transId,
+        branchCode: items[i].branchCode,
+        branchName: items[i].branchName,
+        fromLocation: items[i].fromLocation,
+        toLocation: items[i].toLocation,
+        vendor: items[i].vendor,
+        docNo: items[i].docNo,
+        vehicleNo: items[i].vehicleNo,
+        narration: items[i].narration,
+        insertDate: items[i].insertDate,
+        status: "Completed",
+      });
+    }
+
+    if (data.length == 0) {
+      return res.json({ status: "error", success: false, message: "No completed branch transfer found for the selected date range" });
+    }
+
+    return res.json({ status: "success", success: true, data: data });
+
+  }
+  catch (err) {
+    return res.json({ status: "error", success: false, message: "Internal Error!!! If this condition persists, contact your system administrator", debug: process.env.NODE_ENV === 'development' ? err.stack : undefined });
+  }
+
+});
+
+// DETAILS OF AN ALREADY-COMPLETED INCOMING BRANCH TRANSFER (LOCAL rm_location DATA)
+router.get("/incomingBranchTransferDetails", async (req, res) => {
+
+  try {
+
+    const valid = new Validator(req.query, {
+      trans_id: "required",
+    });
+
+    if (valid.fails()) {
+      return res.json({ status: "error", success: false, message: "Challan ID missing!", data: valid.errors.all() });
+    }
+
+    const stmt = await invtDB.query(
+      `SELECT
+        rm_location.components_id,
+        components.c_name,
+        components.c_part_no,
+        rm_location.loc_in,
+        loc_in_tbl.loc_name AS loc_in_name,
+        rm_location.loc_out,
+        loc_out_tbl.loc_name AS loc_out_name,
+        rm_location.qty,
+        rm_location.in_po_rate,
+        rm_location.in_vendor_name,
+        rm_location.any_remark,
+        rm_location.insert_date,
+        rm_location.insert_by,
+        rm_location.stock_status
+      FROM rm_location
+      LEFT JOIN components ON rm_location.components_id = components.component_key
+      LEFT JOIN location_main AS loc_in_tbl ON rm_location.loc_in = loc_in_tbl.location_key
+      LEFT JOIN location_main AS loc_out_tbl ON rm_location.loc_out = loc_out_tbl.location_key
+      WHERE rm_location.in_transaction_id = :trans_id AND rm_location.trans_type = 'INWARD'`,
+      {
+        replacements: { trans_id: req.query.trans_id },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (stmt.length == 0) {
+      return res.json({ status: "error", success: false, message: "No Record Found" });
+    }
+
+    let data = [];
+
+    for (let i = 0; i < stmt.length; i++) {
+      data.push({
+        component: stmt[i].c_name,
+        part_no: stmt[i].c_part_no,
+        loc_in: stmt[i].loc_in_name,
+        loc_out: stmt[i].loc_out_name,
+        qty: stmt[i].qty,
+        rate: stmt[i].in_po_rate,
+        vendor_code: stmt[i].in_vendor_name,
+        remark: stmt[i].any_remark,
+        insert_date: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
+        status: stmt[i].stock_status,
+      });
+    }
+
+    return res.json({ status: "success", success: true, data: data });
+
+  }
+  catch (err) {
+    return res.json({ status: "error", success: false, message: "Internal Error!!! If this condition persists, contact your system administrator", debug: process.env.NODE_ENV === 'development' ? err.stack : undefined });
+  }
+
+});
+
 // CREATE BRANCH TRANSFER INWARD (PULL ISSUE DATA FROM SOURCE BRANCH SOFTWARE)
 router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res) => {
 
@@ -543,7 +686,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
         // END CHECK LOCATIONS
 
         // INSERT RM LOCATION INWARD
-        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name)", {
+        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name,vendor_type) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name,:vendor_type)", {
           replacements: {
             branch: req.branch,
             type: "INWARD",
@@ -555,9 +698,10 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
             indate: insert_dt,
             inby: req.logedINUser,
             in_transaction_id: items[i].transId,
-            stock_status: "INTRANSIT",
+            stock_status: "COMPLETED",
             in_po_rate: items[i].rate ? items[i].rate : 0,
             in_vendor_name: items[i].vendorCode ? items[i].vendorCode : "--",
+            vendor_type: "BT",
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: transaction,
