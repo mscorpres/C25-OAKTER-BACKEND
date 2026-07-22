@@ -547,6 +547,10 @@ router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, re
 
     const stmt = await invtDB.query(
       `SELECT
+        rm_location.company_branch,
+        branches.branch_name,
+        rm_location.trans_type,
+        rm_location.in_transaction_id,
         rm_location.components_id,
         components.c_name,
         components.c_part_no,
@@ -557,14 +561,19 @@ router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, re
         rm_location.qty,
         rm_location.in_po_rate,
         rm_location.in_vendor_name,
+        ven_basic_detail.ven_name,
         rm_location.any_remark,
         rm_location.insert_date,
         rm_location.insert_by,
+        admin_login.user_name AS insert_by_name,
         rm_location.stock_status
       FROM rm_location
       LEFT JOIN components ON rm_location.components_id = components.component_key
       LEFT JOIN location_main AS loc_in_tbl ON rm_location.loc_in = loc_in_tbl.location_key
       LEFT JOIN location_main AS loc_out_tbl ON rm_location.loc_out = loc_out_tbl.location_key
+      LEFT JOIN admin_login ON rm_location.insert_by = admin_login.CustID
+      LEFT JOIN branches ON rm_location.company_branch = branches.branch_code
+      LEFT JOIN ven_basic_detail ON ven_basic_detail.ven_register_id = rm_location.in_vendor_name
       WHERE rm_location.in_transaction_id = :trans_id AND rm_location.trans_type = 'INWARD'`,
       {
         replacements: { trans_id: req.query.trans_id },
@@ -578,15 +587,25 @@ router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, re
 
       for (let i = 0; i < stmt.length; i++) {
         data.push({
-          component: stmt[i].c_name,
-          part_no: stmt[i].c_part_no,
-          loc_in: stmt[i].loc_in_name,
-          loc_out: stmt[i].loc_out_name,
+          transId: stmt[i].in_transaction_id,
+          branchCode: stmt[i].company_branch,
+          branchName: stmt[i].branch_name,
+          transType: stmt[i].trans_type,
+          componentKey: stmt[i].components_id,
+          componentName: stmt[i].c_name,
+          partNo: stmt[i].c_part_no,
+          locInKey: stmt[i].loc_in,
+          locInName: stmt[i].loc_in_name,
+          locOutKey: stmt[i].loc_out,
+          locOutName: stmt[i].loc_out_name,
           qty: stmt[i].qty,
           rate: stmt[i].in_po_rate,
-          vendor_code: stmt[i].in_vendor_name,
+          vendorCode: stmt[i].in_vendor_name,
+          vendorName: stmt[i].ven_name,
           remark: stmt[i].any_remark,
-          insert_date: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
+          insertDate: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD HH:mm:ss"),
+          insertBy: stmt[i].insert_by,
+          insertByName: stmt[i].insert_by_name,
           status: stmt[i].stock_status,
         });
       }
@@ -617,15 +636,25 @@ router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, re
 
     for (let i = 0; i < items.length; i++) {
       data.push({
-        component: items[i].componentName,
-        part_no: items[i].partNo,
-        loc_in: items[i].locInName,
-        loc_out: items[i].locOutName,
+        transId: items[i].transId,
+        branchCode: items[i].branchCode,
+        branchName: items[i].branchName,
+        transType: items[i].transType,
+        componentKey: items[i].componentKey,
+        componentName: items[i].componentName,
+        partNo: items[i].partNo,
+        locInKey: items[i].locInKey,
+        locInName: items[i].locInName,
+        locOutKey: items[i].locOutKey,
+        locOutName: items[i].locOutName,
         qty: items[i].qty,
         rate: items[i].rate,
-        vendor_code: items[i].vendorCode,
+        vendorCode: items[i].vendorCode,
+        vendorName: items[i].vendorName,
         remark: items[i].remark,
-        insert_date: items[i].insertDate,
+        insertDate: items[i].insertDate,
+        insertBy: items[i].insertBy,
+        insertByName: items[i].insertByName,
         status: "INTRANSIT",
       });
     }
