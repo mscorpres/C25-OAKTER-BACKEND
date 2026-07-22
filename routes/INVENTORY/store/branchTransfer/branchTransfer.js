@@ -512,8 +512,30 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
       for (let i = 0; i < items.length; i++) {
 
+        // CHECK IF locIn LOCATION EXISTS LOCALLY, ELSE CREATE IT WITH SAME KEY
+        const loc_exists = await invtDB.query("SELECT 1 FROM location_main WHERE location_key = :location_key LIMIT 1", {
+          replacements: { location_key: items[i].locInKey },
+          type: invtDB.QueryTypes.SELECT,
+          transaction: transaction,
+        });
+
+        if (loc_exists.length == 0) {
+          await invtDB.query("INSERT INTO location_main (company_branch, loc_name, location_key, insert_date, inserted_by) VALUES (:branch, :loc_name, :location_key, :insert_date, :inserted_by)", {
+            replacements: {
+              branch: req.branch,
+              loc_name: items[i].locInName ? items[i].locInName : "--",
+              location_key: items[i].locInKey,
+              insert_date: insert_dt,
+              inserted_by: req.logedINUser,
+            },
+            type: invtDB.QueryTypes.INSERT,
+            transaction: transaction,
+          });
+        }
+        // END CHECK LOCATION
+
         // INSERT RM LOCATION INWARD
-        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status)", {
+        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate)", {
           replacements: {
             branch: req.branch,
             type: "INWARD",
@@ -525,7 +547,8 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
             indate: insert_dt,
             inby: req.logedINUser,
             in_transaction_id: items[i].transId,
-            stock_status: "PHYSICAL",
+            stock_status: "INTRANSIT",
+            in_po_rate: items[i].rate ? items[i].rate : 0,
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: transaction,
