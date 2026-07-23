@@ -31,6 +31,9 @@ function applyFgTxn(txn, state) {
   // 3. FG inward through Purchase → UP (apne rate pe blend)
   const isPurchase = txn.inward_type === "VENDOR" && txn.vendor_type === "v01";
 
+  // 3b. FG inward through Branch Transfer → UP (apne rate pe blend)
+  const isBranchTransfer = txn.vendor_type === "BT";
+
   // 4. FG Sales Return → qty UP, par current WAR pe (WAR same rehta)
   const isSalesReturn =
     txn.inward_type === "SALES-RETURN" && txn.vendor_type === "s01";
@@ -49,7 +52,7 @@ function applyFgTxn(txn, state) {
         : state.lastWAR;
     state.runningValue = Math.max(0, state.runningValue - outQty * currentWAR);
     state.runningQty = Math.max(0, state.runningQty - outQty);
-  } else if (isPurchase || isMfgInward) {
+  } else if (isPurchase || isMfgInward || isBranchTransfer) {
     state.runningValue = state.runningValue + inQty * inRate;
     state.runningQty = state.runningQty + inQty;
   } else if (isSalesReturn) {
@@ -340,6 +343,7 @@ exports.printFGTable = async function (skuKey, date = null) {
       const isTransfer = txn.type === "TRANSFER" && txn.fg_out_type === "--";
       const isPurchase =
         txn.inward_type === "VENDOR" && txn.vendor_type === "v01";
+      const isBranchTransfer = txn.vendor_type === "BT";
       const isSalesReturn =
         txn.inward_type === "SALES-RETURN" && txn.vendor_type === "s01";
       const isMfgInward = txn.type === "IN" && txn.fg_status === "ACTIVE";
@@ -366,6 +370,11 @@ exports.printFGTable = async function (skuKey, date = null) {
         dispRate = inRate;
         dispValue = inQty * inRate;
         label = "FG Purchase [+]";
+      } else if (isBranchTransfer) {
+        dispQty = inQty;
+        dispRate = inRate;
+        dispValue = inQty * inRate;
+        label = "FG Branch Transfer [+]";
       } else if (isMfgInward) {
         dispQty = inQty;
         dispRate = inRate;

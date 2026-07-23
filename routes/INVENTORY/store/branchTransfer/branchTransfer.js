@@ -689,7 +689,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
       type: invtDB.QueryTypes.SELECT
     });
 
-    const already_inward_fg = await invtDB.query("SELECT 1 FROM fg_location WHERE fg_in_transaction = :trans_id AND fg_type = 'IN' LIMIT 1", {
+    const already_inward_fg = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND type = 'BRANCHTRANSFER' LIMIT 1", {
       replacements: { trans_id },
       type: invtDB.QueryTypes.SELECT
     });
@@ -773,7 +773,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
           const sku_code = product[0].p_sku;
 
           // DUPLICATE CHECK — sku_code is the products key-space, separate from RM's components_id key-space
-          const already_item = await invtDB.query("SELECT 1 FROM fg_location WHERE fg_in_transaction = :trans_id AND fg_type = 'IN' AND sku_code = :sku_code LIMIT 1", {
+          const already_item = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND mfg_pro_apr_sku = :sku_code AND type = 'BRANCHTRANSFER' LIMIT 1", {
             replacements: { trans_id: items[i].transId, sku_code },
             type: invtDB.QueryTypes.SELECT,
             transaction: transaction,
@@ -781,24 +781,37 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
           if (already_item.length > 0) continue;
 
-          // INSERT FG LOCATION INWARD
-          await invtDB.query("INSERT INTO fg_location (fg_type,sku_code,fg_loc_in,fg_loc_out,qty,rate,fg_in_transaction,ppr_id,mfg_id,ppr_created_by,mfg_created_by,mfg_created_dt,insert_by,insert_dt) VALUES ('IN',:sku_code,:loc_in,:loc_out,:qty,:rate,:in_transaction_id,'--','--',:created_by,:created_by,:created_dt,:insert_by,:insert_dt)", {
-            replacements: {
-              sku_code,
-              loc_in: items[i].locInKey,
-              loc_out: items[i].locOutKey,
-              qty: items[i].qty,
-              rate: items[i].rate ? items[i].rate : 0,
-              in_transaction_id: items[i].transId,
-              created_by: req.logedINUser,
-              created_dt: insert_dt,
-              insert_by: req.logedINUser,
-              insert_dt: insert_dt,
-            },
-            type: invtDB.QueryTypes.INSERT,
-            transaction: transaction,
-          });
-          // END INSERT FG LOCATION INWARD
+          // INSERT INTO mfg_production_3 (same FG-stock/WAR table used by savefginward — NOT fg_location, which stock/rate calculations don't read)
+          await invtDB.query(
+            `INSERT INTO mfg_production_3
+              (txn_session, company_branch, mfg_pro_apr_sku, mfg_approve_in_qty, in_fg_rate,
+               mfg_pro_location_in, fgout_pro_location_out, vendor_type, in_vendor_name,
+               mfg_pro_apr_fulldate, mfg_pro_apr_by, fg_out_remark, type, mfg_pro_apr_transaction)
+             VALUES
+              (:txn_session, :branch, :sku, :qty, :rate,
+               :loc_in, :loc_out, :vendor_type, :vendor_code,
+               :insert_dt, :insert_by, :remark, 'BRANCHTRANSFER', :trans_id)`,
+            {
+              replacements: {
+                txn_session: helper.generateTxnSession(),
+                branch: req.branch,
+                sku: sku_code,
+                qty: items[i].qty,
+                rate: items[i].rate ? items[i].rate : 0,
+                loc_in: items[i].locInKey,
+                loc_out: items[i].locOutKey,
+                vendor_type: "BT",
+                vendor_code: items[i].vendorCode ? items[i].vendorCode : "--",
+                insert_dt: insert_dt,
+                insert_by: req.logedINUser,
+                remark: items[i].remark ? items[i].remark : "--",
+                trans_id: items[i].transId,
+              },
+              type: invtDB.QueryTypes.INSERT,
+              transaction: transaction,
+            }
+          );
+          // END INSERT INTO mfg_production_3
 
         } else {
 
