@@ -683,13 +683,18 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
     const trans_id = req.body.trans_id;
 
-    // ALREADY INWARDED CHECK
-    const already_inward = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' LIMIT 1", {
+    // ALREADY INWARDED CHECK (RM side or FG side)
+    const already_inward_rm = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' LIMIT 1", {
       replacements: { trans_id },
       type: invtDB.QueryTypes.SELECT
     });
 
-    if (already_inward.length > 0) {
+    const already_inward_fg = await invtDB.query("SELECT 1 FROM fg_location WHERE fg_in_transaction = :trans_id AND fg_type = 'IN' LIMIT 1", {
+      replacements: { trans_id },
+      type: invtDB.QueryTypes.SELECT
+    });
+
+    if (already_inward_rm.length > 0 || already_inward_fg.length > 0) {
       return res.json({ status: "error", success: false, message: "This branch transfer has already been received!" });
     }
 
@@ -744,33 +749,92 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
       for (let i = 0; i < items.length; i++) {
 
+        const transferType = items[i].transferType ? items[i].transferType : "component";
+
         // CHECK PICK (loc_out) AND DROP (loc_in) LOCATIONS EXIST LOCALLY
         await ensureLocation(items[i].locOutKey, items[i].locOutName);
         await ensureLocation(items[i].locInKey, items[i].locInName);
         // END CHECK LOCATIONS
 
-        // INSERT RM LOCATION INWARD
-        await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name,vendor_type) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name,:vendor_type)", {
-          replacements: {
-            branch: req.branch,
-            type: "INWARD",
-            component: items[i].componentKey,
-            loc_in: items[i].locInKey,
-            loc_out: items[i].locOutKey,
-            qty: items[i].qty,
-            remark: items[i].remark ? items[i].remark : "--",
-            indate: insert_dt,
-            inby: req.logedINUser,
-            in_transaction_id: items[i].transId,
-            stock_status: "COMPLETED",
-            in_po_rate: items[i].rate ? items[i].rate : 0,
-            in_vendor_name: items[i].vendorCode ? items[i].vendorCode : "--",
-            vendor_type: "BT",
-          },
-          type: invtDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
-        // END INSERT RM LOCATION INWARD
+        if (transferType === "product") {
+
+          // RESOLVE LOCAL PRODUCT MASTER BY product_key (componentKey is the product_key for FG items)
+          const product = await invtDB.query("SELECT p_sku FROM products WHERE product_key = :product_key LIMIT 1", {
+            replacements: { product_key: items[i].componentKey },
+            type: invtDB.QueryTypes.SELECT,
+            transaction: transaction,
+          });
+
+          if (product.length == 0) {
+            await transaction.rollback();
+            return res.json({ status: "error", success: false, message: `Product "${items[i].componentName || items[i].componentKey}" not found in local products master (key: ${items[i].componentKey})` });
+          }
+
+          const sku_code = product[0].p_sku;
+
+          // DUPLICATE CHECK — sku_code is the products key-space, separate from RM's components_id key-space
+          const already_item = await invtDB.query("SELECT 1 FROM fg_location WHERE fg_in_transaction = :trans_id AND fg_type = 'IN' AND sku_code = :sku_code LIMIT 1", {
+            replacements: { trans_id: items[i].transId, sku_code },
+            type: invtDB.QueryTypes.SELECT,
+            transaction: transaction,
+          });
+
+          if (already_item.length > 0) continue;
+
+          // INSERT FG LOCATION INWARD
+          await invtDB.query("INSERT INTO fg_location (fg_type,sku_code,fg_loc_in,fg_loc_out,qty,rate,fg_in_transaction,ppr_id,mfg_id,ppr_created_by,mfg_created_by,mfg_created_dt,insert_by,insert_dt) VALUES ('IN',:sku_code,:loc_in,:loc_out,:qty,:rate,:in_transaction_id,'--','--',:created_by,:created_by,:created_dt,:insert_by,:insert_dt)", {
+            replacements: {
+              sku_code,
+              loc_in: items[i].locInKey,
+              loc_out: items[i].locOutKey,
+              qty: items[i].qty,
+              rate: items[i].rate ? items[i].rate : 0,
+              in_transaction_id: items[i].transId,
+              created_by: req.logedINUser,
+              created_dt: insert_dt,
+              insert_by: req.logedINUser,
+              insert_dt: insert_dt,
+            },
+            type: invtDB.QueryTypes.INSERT,
+            transaction: transaction,
+          });
+          // END INSERT FG LOCATION INWARD
+
+        } else {
+
+          // DUPLICATE CHECK — components_id is the RM key-space
+          const already_item = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' AND components_id = :component LIMIT 1", {
+            replacements: { trans_id: items[i].transId, component: items[i].componentKey },
+            type: invtDB.QueryTypes.SELECT,
+            transaction: transaction,
+          });
+
+          if (already_item.length > 0) continue;
+
+          // INSERT RM LOCATION INWARD
+          await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name,vendor_type) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name,:vendor_type)", {
+            replacements: {
+              branch: req.branch,
+              type: "INWARD",
+              component: items[i].componentKey,
+              loc_in: items[i].locInKey,
+              loc_out: items[i].locOutKey,
+              qty: items[i].qty,
+              remark: items[i].remark ? items[i].remark : "--",
+              indate: insert_dt,
+              inby: req.logedINUser,
+              in_transaction_id: items[i].transId,
+              stock_status: "COMPLETED",
+              in_po_rate: items[i].rate ? items[i].rate : 0,
+              in_vendor_name: items[i].vendorCode ? items[i].vendorCode : "--",
+              vendor_type: "BT",
+            },
+            type: invtDB.QueryTypes.INSERT,
+            transaction: transaction,
+          });
+          // END INSERT RM LOCATION INWARD
+
+        }
 
       }// END LOOP
 
