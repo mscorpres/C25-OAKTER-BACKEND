@@ -60,6 +60,7 @@ function isInwardTxn(txn) {
       txn.vendor_type === "j01") ||
     (txn.trans_type === "INWARD" && txn.in_module === "PART-CONV") ||
     (txn.trans_type === "INWARD" && txn.in_module === "IN-QCA")  ||
+    (txn.trans_type === "INWARD" && txn.vendor_type === "BT") ||
     (txn.trans_type === "TRANSFER" &&
       txn.trans_mode === "return" &&
       txn.vendor_type === "j01")
@@ -85,6 +86,7 @@ function isOutwardTxn(txn) {
  *
  * WVR Rules:
  *  UP (+)    : INWARD  + in_module != IN-WO  + vendor_type = v01
+ *              INWARD  + vendor_type = BT (branch transfer)
  *              TRANSFER + trans_mode = return + vendor_type = j01
  *
  *  DOWN (-)  : ISSUE/CONSUMPTION + loc_storable = 0  (currentWVR use hoga)
