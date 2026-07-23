@@ -107,7 +107,7 @@ function byDate(a, b) {
 // 				// For IN / FGMIN / TRANSFER transactions: check mfg_pro_location_in
 // 				// For OUT transactions: check fgout_pro_location_out
 // 			if (req.body.location && req.body.location !== "") {
-// 					whereClause += " AND ((mfg_production_3.type = 'IN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'FGMIN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'TRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fgout_pro_location_out = :location AND mfg_production_3.fg_status = 'ACTIVE'))";
+// 					whereClause += " AND ((mfg_production_3.type = 'IN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'FGMIN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'TRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'BRANCHTRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fgout_pro_location_out = :location AND mfg_production_3.fg_status = 'ACTIVE'))";
 // 					replacements.location = req.body.location;
 // 				}
 
@@ -117,7 +117,7 @@ function byDate(a, b) {
 // 					const date2 = moment(req.body.end_date).format("YYYY-MM-DD");
 // 					replacements.date1 = date1;
 // 					replacements.date2 = date2;
-// 					whereClause += " AND (((mfg_production_3.type IN ('IN', 'FGMIN', 'TRANSFER') AND DATE_FORMAT(mfg_production_3.mfg_pro_apr_fulldate,'%Y-%m-%d') BETWEEN :date1 AND :date2) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fg_status = 'ACTIVE' AND DATE_FORMAT(mfg_production_3.fgout_pro_apr_date,'%Y-%m-%d') BETWEEN :date1 AND :date2)))";
+// 					whereClause += " AND (((mfg_production_3.type IN ('IN', 'FGMIN', 'TRANSFER', 'BRANCHTRANSFER') AND DATE_FORMAT(mfg_production_3.mfg_pro_apr_fulldate,'%Y-%m-%d') BETWEEN :date1 AND :date2) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fg_status = 'ACTIVE' AND DATE_FORMAT(mfg_production_3.fgout_pro_apr_date,'%Y-%m-%d') BETWEEN :date1 AND :date2)))";
 // 				}
 
 // 				let queryString = `SELECT 
@@ -251,7 +251,7 @@ function byDate(a, b) {
 // 					}
 
 // 					//CREDIT BALANCE
-// 					let stmt4 = await invtDB.query("SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYinTODAY` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN')", {
+// 					let stmt4 = await invtDB.query("SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYinTODAY` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN', 'BRANCHTRANSFER')", {
 // 						replacements: {
 // 							sku: stmt1[0].p_sku,
 // 						},
@@ -613,7 +613,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
   
 		  if (req.query.location && req.query.location !== "") {
 			whereClause +=
-			  " AND ((mfg_production_3.type = 'IN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'FGMIN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'TRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fgout_pro_location_out = :location AND mfg_production_3.fg_status = 'ACTIVE'))";
+			  " AND ((mfg_production_3.type = 'IN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'FGMIN' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'TRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'BRANCHTRANSFER' AND mfg_production_3.mfg_pro_location_in = :location) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fgout_pro_location_out = :location AND mfg_production_3.fg_status = 'ACTIVE'))";
 			replacements.location = req.query.location;
 		  }
   
@@ -629,7 +629,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			replacements.date1 = date1;
 			replacements.date2 = date2;
 			whereClause +=
-			  " AND (((mfg_production_3.type IN ('IN', 'FGMIN', 'TRANSFER') AND DATE_FORMAT(mfg_production_3.mfg_pro_apr_fulldate,'%Y-%m-%d') BETWEEN :date1 AND :date2) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fg_status = 'ACTIVE' AND DATE_FORMAT(mfg_production_3.fgout_pro_apr_date,'%Y-%m-%d') BETWEEN :date1 AND :date2)))";
+			  " AND (((mfg_production_3.type IN ('IN', 'FGMIN', 'TRANSFER', 'BRANCHTRANSFER') AND DATE_FORMAT(mfg_production_3.mfg_pro_apr_fulldate,'%Y-%m-%d') BETWEEN :date1 AND :date2) OR (mfg_production_3.type = 'OUT' AND mfg_production_3.fg_status = 'ACTIVE' AND DATE_FORMAT(mfg_production_3.fgout_pro_apr_date,'%Y-%m-%d') BETWEEN :date1 AND :date2)))";
 		  }
   
 		  let queryString = `SELECT
@@ -756,7 +756,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			}
   
 			let stmt4 = await invtDB.query(
-			  "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYinTODAY` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN') AND fg_status = 'ACTIVE'",
+			  "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYinTODAY` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN', 'BRANCHTRANSFER') AND fg_status = 'ACTIVE'",
 			  {
 				replacements: { sku: stmt1[0].p_sku },
 				type: invtDB.QueryTypes.SELECT,
@@ -823,7 +823,8 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			  const txDate =
 				item.transaction_type == "IN" ||
 				item.transaction_type == "FGMIN" ||
-				item.transaction_type == "TRANSFER"
+				item.transaction_type == "TRANSFER" ||
+				item.transaction_type == "BRANCHTRANSFER"
 				  ? item.in_date
 				  : item.out_date;
 			  const txDateFormatted = txDate
@@ -869,6 +870,23 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				location_in = item.loc_in_name || "--";
 				location_out = "--";
 				mode = "FGMIN";
+				weightedSKURate = 0;
+			  } else if (item.transaction_type == "BRANCHTRANSFER") {
+				transaction_type = IN;
+				transaction_type_label = "BRANCH TRANSFER";
+				transaction_id = item.mfg_pro_apr_transaction
+				  ? "BRANCH TRF TXN: " + item.mfg_pro_apr_transaction
+				  : "N/A";
+				transaction_date = moment(item.in_date)
+				  .tz("Asia/Kolkata")
+				  .format("DD-MM-YYYY HH:mm:ss");
+				transaction_qty = item.in_qty;
+				transaction_qty_in = item.in_qty || 0;
+				transaction_qty_out = 0;
+				transaction_doneby = item.in_by_user || "--";
+				location_in = item.loc_in_name || "--";
+				location_out = "--";
+				mode = "BRANCHTRANSFER";
 				weightedSKURate = 0;
 			  } else if (item.transaction_type == "TRANSFER") {
 				transaction_type = NEUTRAL;
@@ -945,7 +963,8 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				m3St !== "ACTIVE" ||
 				((item.transaction_type === "IN" ||
 				  item.transaction_type === "TRANSFER" ||
-				  item.transaction_type === "FGMIN") &&
+				  item.transaction_type === "FGMIN" ||
+				  item.transaction_type === "BRANCHTRANSFER") &&
 				  m2St !== "ACTIVE");
 			  if (isCancelledRow) {
 				transaction_type = CANCELLEND;
