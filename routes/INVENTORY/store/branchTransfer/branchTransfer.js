@@ -14,6 +14,8 @@ const axios = require("axios");
 
 const Validator = require("validatorjs");
 
+const OAKTER_BASE_URL = process.env.OAKTER_BASE_URL
+
 // CREATE BRANCH TRANSFER
 router.post("/createBranchTransfer", [auth.isAuthorized], async (req, res) => {
 
@@ -478,7 +480,7 @@ router.get("/incomingBranchTransferList", async (req, res) => {
     // FETCH CHALLAN LIST FROM SOURCE BRANCH SOFTWARE
     let remote_response;
     try {
-      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/list", {
+      remote_response = await axios.get(`${OAKTER_BASE_URL}/api/v1/branchTransfer/list`, {
         params: { from: req.query.from, to: req.query.to },
       });
     }
@@ -616,7 +618,7 @@ router.get("/incomingBranchTransferDetails", [auth.isAuthorized], async (req, re
     // NOT YET PULLED — FETCH LIVE DETAILS FROM SOURCE BRANCH SOFTWARE
     let remote_response;
     try {
-      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/details", {
+      remote_response = await axios.get(`${OAKTER_BASE_URL}/api/v1/branchTransfer/details`, {
         params: { trans_id: req.query.trans_id },
       });
     }
@@ -701,7 +703,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
     // FETCH ISSUE DETAILS FROM SOURCE BRANCH SOFTWARE
     let remote_response;
     try {
-      remote_response = await axios.get("https://dev.mscorpres.net/api/v1/branchTransfer/details", {
+      remote_response = await axios.get(`${OAKTER_BASE_URL}/api/v1/branchTransfer/details`, {
         params: { trans_id: trans_id },
       });
     }
