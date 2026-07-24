@@ -173,23 +173,23 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     let close_data = [];
     let totalBalance = 0;
     let total_opening = 0;
-    let query = "";
-    for (let i = 0; i < stmt_get_all_location.length; i++) {
-      query += `SELECT
-        COALESCE(SUM(CASE WHEN trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in = '${stmt_get_all_location[i].location_key}' AND DATE_FORMAT(insert_date, '%Y-%m-%d') < :date THEN qty ELSE 0 END ), 0) AS total_inward,
-        COALESCE(SUM(CASE WHEN trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out = '${stmt_get_all_location[i].location_key}' AND DATE_FORMAT(insert_date, '%Y-%m-%d') < :date THEN qty ELSE 0 END ), 0) AS total_outward,
-        (COALESCE(SUM(CASE WHEN trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in = '${stmt_get_all_location[i].location_key}' AND DATE_FORMAT(insert_date, '%Y-%m-%d') <= :date THEN qty ELSE 0 END ), 0) -
-        COALESCE(SUM(CASE WHEN trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out = '${stmt_get_all_location[i].location_key}' AND DATE_FORMAT(insert_date, '%Y-%m-%d') <= :date THEN qty ELSE 0 END ), 0)) AS closing,
-        '${stmt_get_all_location[i].loc_name}' AS loc_name
-    FROM rm_location
-    WHERE components_id = '${component}';
-    `;
-    }
 
-    const stmt_get_all_loc_stock = await invtDB.query(query, {
-      replacements: { date: given_date },
-      type: invtDB.QueryTypes.SELECT,
-    });
+    const stock_query = `SELECT
+        COALESCE(SUM(CASE WHEN trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in = :location_key AND DATE_FORMAT(insert_date, '%Y-%m-%d') < :date THEN qty ELSE 0 END ), 0) AS total_inward,
+        COALESCE(SUM(CASE WHEN trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out = :location_key AND DATE_FORMAT(insert_date, '%Y-%m-%d') < :date THEN qty ELSE 0 END ), 0) AS total_outward,
+        (COALESCE(SUM(CASE WHEN trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in = :location_key AND DATE_FORMAT(insert_date, '%Y-%m-%d') <= :date THEN qty ELSE 0 END ), 0) -
+        COALESCE(SUM(CASE WHEN trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out = :location_key AND DATE_FORMAT(insert_date, '%Y-%m-%d') <= :date THEN qty ELSE 0 END ), 0)) AS closing
+    FROM rm_location
+    WHERE components_id = :component`;
+
+    const stmt_get_all_loc_stock = await Promise.all(
+      stmt_get_all_location.map((loc) =>
+        invtDB.query(stock_query, {
+          replacements: { location_key: loc.location_key, date: given_date, component },
+          type: invtDB.QueryTypes.SELECT,
+        })
+      )
+    );
 
     // Ensure closing/opening stock: no decimals (floor), < 1 or negative → show 0
     const toStockDisplay = (val) => helper.number(Math.max(0, Math.floor(Number(val) || 0)));
@@ -198,7 +198,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       const rawOpening = stmt_get_all_loc_stock[i][0].total_inward - stmt_get_all_loc_stock[i][0].total_outward;
       const rawClosing = stmt_get_all_loc_stock[i][0].closing;
       close_data.push({
-        loc_name: stmt_get_all_loc_stock[i][0].loc_name,
+        loc_name: stmt_get_all_location[i].loc_name,
         loc_owner: stmt_get_all_location[i].assigned_to, loc_address: stmt_get_all_location[i].loc_address,
         opening: toStockDisplay(rawOpening),
         closing: toStockDisplay(rawClosing),
@@ -242,7 +242,9 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       },
     });
   } catch (err) {
-    return helper.errorResponse(res, err);
+    console.error( err);
+    return res.json({ success: false, status: "error", message: err.message });
+    // return helper.errorResponse(res, err);
   }
 });
 
