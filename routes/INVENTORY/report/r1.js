@@ -376,14 +376,14 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     }
 
     let location_key = "";
-    // A21 R1 store LOCATION
-    if (req.branch == "BRMSC012") {
+    
+    // C25 R1 store LOCATION
+    if (req.branch == "BROAKTRC25") {
       location_key = "202381510340465";
     }
-    // B29 R1 store LOCATION
-    if (req.branch == "BRMSC029") {
-      location_key = "2023815103533746";
-    }
+    
+
+    
 
     // BRANCH R1 store STOCK LOCATION
     let stmt_get_a21 = await invtDB.query(
