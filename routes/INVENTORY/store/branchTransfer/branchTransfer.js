@@ -691,7 +691,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
       type: invtDB.QueryTypes.SELECT
     });
 
-    const already_inward_fg = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND type = 'BRANCHTRANSFER' LIMIT 1", {
+    const already_inward_fg = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND type = 'IN' LIMIT 1", {
       replacements: { trans_id },
       type: invtDB.QueryTypes.SELECT
     });
@@ -775,7 +775,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
           const sku_code = product[0].p_sku;
 
           // DUPLICATE CHECK — sku_code is the products key-space, separate from RM's components_id key-space
-          const already_item = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND mfg_pro_apr_sku = :sku_code AND type = 'BRANCHTRANSFER' LIMIT 1", {
+          const already_item = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND mfg_pro_apr_sku = :sku_code AND type = 'IN' LIMIT 1", {
             replacements: { trans_id: items[i].transId, sku_code },
             type: invtDB.QueryTypes.SELECT,
             transaction: transaction,
@@ -792,7 +792,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
              VALUES
               (:txn_session, :branch, :sku, :qty, :rate,
                :loc_in, :loc_out, :vendor_type, :vendor_code,
-               :insert_dt, :insert_by, :remark, 'BRANCHTRANSFER', :trans_id)`,
+               :insert_dt, :insert_by, :remark, 'IN', :trans_id)`,
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
