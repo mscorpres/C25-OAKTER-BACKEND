@@ -17,6 +17,7 @@ const tempAuth = require("../../middleware/tempAuth");
 const auth = require("../../middleware/auth");
 const permission = require("../../middleware/permission");
 const { decode } = require("punycode");
+const { getMailTemplate } = require("../../helper/mailTemplateYaml/mailTemplate");
 
 ////////////////////////////////
 const LOGIN_TRACK_MSG =
@@ -2302,7 +2303,7 @@ router.patch("/updatePassword", async (req, res) => {
 
 
 
-router.post("/get-email-otp", [auth.isAuthorized], async (req, res) => {
+router.post("/get-email-otp",  async (req, res) => {
   const validation = new Validator(req.body, {
     email: "required|email",
   });
@@ -2318,11 +2319,11 @@ router.post("/get-email-otp", [auth.isAuthorized], async (req, res) => {
 
     // Check whether email already exists for this account
     const emailExist = await invtDB.query(
-      `SELECT Email_ID FROM admin_login WHERE Email_ID = :email`,
+      `SELECT Email_ID FROM admin_login WHERE Email_ID = :email AND CustID =:userId`,
       {
         replacements: {
           email: req.body.email,
-          // user_id: req.logedINUser,
+          userId: req.logedINUser,
         },
         type: invtDB.QueryTypes.SELECT,
       }
@@ -2341,13 +2342,14 @@ router.post("/get-email-otp", [auth.isAuthorized], async (req, res) => {
 
     // Save OTP in DB
     await invtDB.query(
-      `UPDATE admin_login SET email_otp = :otp, email_otp_time = :otpTime, pending_email = :pendingEmail WHERE CustID = :user_id`,
+      `UPDATE admin_login SET email_otp = :otp, email_otp_time = :otpTime, pending_email = :pendingEmail WHERE CustID = :userId`,
       {
         replacements: {
           otp,
           otpTime,
           pendingEmail: req.body.email,
-          user_id: req.logedINUser,
+          // userId: "CRN8527467",
+          userId: req.logedINUser,
         },
         type: invtDB.QueryTypes.UPDATE,
       }
@@ -2445,6 +2447,7 @@ router.post("/verify-email-otp", [auth.isAuthorized], async (req, res) => {
       `UPDATE admin_login SET Email_ID = pending_email, email_otp = NULL, email_otp_time = NULL, pending_email = NULL WHERE CustID = :user_id`,
       {
         replacements: {
+          // user_id: "CRN8527467",
           user_id: req.logedINUser,
         },
         type: invtDB.QueryTypes.UPDATE,
