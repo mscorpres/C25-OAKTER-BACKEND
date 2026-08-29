@@ -221,6 +221,7 @@ module.exports = function (app) {
     app.use("/org", require("./ADMIN/company"));
     app.use("/admin/po_mail", require("./ADMIN/poTeam"));
     app.use("/changelog", require("./ADMIN/changelog"));
+    app.use("/admin", require("./ADMIN/userProfile"));
 
   // SOP
   app.use("/drive", require("./SOP/sop"));

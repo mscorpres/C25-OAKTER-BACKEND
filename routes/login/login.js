@@ -2300,4 +2300,171 @@ router.patch("/updatePassword", async (req, res) => {
   }
 });
 
+
+
+router.post("/get-email-otp", [auth.isAuthorized], async (req, res) => {
+  const validation = new Validator(req.body, {
+    email: "required|email",
+  });
+
+  try {
+    if (validation.fails()) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: helper.firstErrorValidatorjs(validation),
+      });
+    }
+
+    // Check whether email already exists for this account
+    const emailExist = await invtDB.query(
+      `SELECT Email_ID FROM admin_login WHERE Email_ID = :email`,
+      {
+        replacements: {
+          email: req.body.email,
+          // user_id: req.logedINUser,
+        },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (emailExist.length > 0) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Email already exists. Kindly provide another email.",
+      });
+    }
+
+    const otp = Math.floor(1000 + Math.random() * 9000);
+    const otpTime = moment().format("YYYY-MM-DD HH:mm:ss");
+
+    // Save OTP in DB
+    await invtDB.query(
+      `UPDATE admin_login SET email_otp = :otp, email_otp_time = :otpTime, pending_email = :pendingEmail WHERE CustID = :user_id`,
+      {
+        replacements: {
+          otp,
+          otpTime,
+          pendingEmail: req.body.email,
+          user_id: req.logedINUser,
+        },
+        type: invtDB.QueryTypes.UPDATE,
+      }
+    );
+
+    // Prepare Email Template
+    const template = getMailTemplate("Email_change", {
+      otp,
+    });
+
+    const mail = await helper.sendMail(
+      req.body.email,
+      null,
+      template.subject,
+      template.html
+    );
+
+    if (mail.code != 200) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Unable to send OTP.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      status: "success",
+      message: "OTP sent successfully. OTP is valid for 3 minutes.",
+    });
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({
+      success: false,
+      status: "error",
+      message: "an error occurred while sending OTP.\nPlease contact to system administrator.",
+    });
+  }
+});
+
+router.post("/verify-email-otp", [auth.isAuthorized], async (req, res) => {
+  const validation = new Validator(req.body, {
+    otp: "required",
+  });
+
+  try {
+    if (validation.fails()) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: helper.firstErrorValidatorjs(validation),
+      });
+    }
+
+    const [user] = await invtDB.query(
+      `SELECT email_otp, email_otp_time, pending_email FROM admin_login WHERE CustID = :user_id`,
+      {
+        replacements: { user_id: req.logedINUser },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (!user || !user.email_otp || !user.pending_email) {
+      return res.json({ success: false, status: "error", message: "OTP expired. Please request a new OTP." });
+    }
+
+    const diff = moment().diff(moment(user.email_otp_time), "minutes", true);
+
+    if (diff > 3) {
+      await invtDB.query(
+        `UPDATE admin_login SET email_otp = NULL, email_otp_time = NULL, pending_email = NULL WHERE CustID = :user_id`,
+        {
+          replacements: { user_id: req.logedINUser },
+          type: invtDB.QueryTypes.UPDATE,
+        }
+      );
+
+      return res.json({
+        success: false,
+        status: "error",
+        message: "OTP expired. Please request a new OTP.",
+      });
+    }
+
+    if (String(user.email_otp) !== String(req.body.otp)) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Invalid OTP.",
+      });
+    }
+
+    // Update email after successful verification
+    await invtDB.query(
+      `UPDATE admin_login SET Email_ID = pending_email, email_otp = NULL, email_otp_time = NULL, pending_email = NULL WHERE CustID = :user_id`,
+      {
+        replacements: {
+          user_id: req.logedINUser,
+        },
+        type: invtDB.QueryTypes.UPDATE,
+      }
+    );
+
+    return res.json({
+      success: true,
+      status: "success",
+      message: "Email updated successfully.",
+    });
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({
+      success: false,
+      status: "error",
+      message: "an error occurred while verifying OTP.\nPlease contact to system administrator.",
+    });
+  }
+});
+
+
 module.exports = router;
