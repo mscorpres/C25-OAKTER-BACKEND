@@ -526,7 +526,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
       if (finalResult.length === 0) {
         res.json({
           success: false,
-          message: { msg: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" },
+          message: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" ,
           status: "error",
         });
         return;
