@@ -362,6 +362,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
       data: validation.errors.all(),
     });
   }
+  const ARCHIVE_CUTOFF_DATE = "2026-09-01";
 
   try {
     let stmt = [];
@@ -384,6 +385,15 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
         });
       }
 
+      if (fromdate < ARCHIVE_CUTOFF_DATE) {
+        return res.json({
+          success: false,
+          message: { msg: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" },
+          status: "error",
+        });
+      }
+
+
       stmt = await invtDB.query(
         `SELECT 
           ven_basic_detail.ven_name, 
@@ -394,6 +404,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
           ims_dc_challan.ewaybill_no, 
           ims_dc_challan.ewaybill_status,
           ims_dc_challan.dc_qty,
+          ims_dc_challan.return_inward_qty,
           ims_dc_challan.dc_rate,
           ims_dc_challan.dc_hsn,
           ims_dc_challan.component,
@@ -433,6 +444,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
           ims_dc_challan.ewaybill_no, 
           ims_dc_challan.ewaybill_status,
           ims_dc_challan.dc_qty,
+          ims_dc_challan.return_inward_qty,
           ims_dc_challan.dc_rate,
           ims_dc_challan.dc_hsn,
           ims_dc_challan.component,
@@ -473,9 +485,19 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
       stmt.forEach((element, index) => {
         let jsonData_log = JSON.parse(element.dc_log);
 
+        const insertDateOnly = moment(jsonData_log.insert_date, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD");
+        if (insertDateOnly < ARCHIVE_CUTOFF_DATE) {
+          return; // skip archived transactions (relevant for gpwise search)
+        }
         const lineTotal = (
           parseFloat(element.dc_qty || 0) * parseFloat(element.dc_rate || 0)
         ).toFixed(2);
+
+        const originalQty = parseFloat(element.dc_qty || 0);
+        const returnedQty = parseFloat(element.return_inward_qty || 0);
+        const pendingQty = parseFloat((originalQty - returnedQty).toFixed(4));
+
+
 
         finalResult.push({
           serial_no: index + 1,
@@ -491,13 +513,24 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
           part_no: element.c_part_no || "--",
           component_name: element.c_name || "--",
           component_key: element.component || "--",
-          quantity: parseFloat(element.dc_qty || 0),
+          quantity: originalQty,
+          returned_qty: returnedQty,
+          pending_qty: pendingQty < 0 ? 0 : pendingQty,
           rate: parseFloat(element.dc_rate || 0).toFixed(2),
           unit: element.units_name || "--",
           hsn: element.dc_hsn || "--",
           line_total: lineTotal,
         });
       });
+
+      if (finalResult.length === 0) {
+        res.json({
+          success: false,
+          message: { msg: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" },
+          status: "error",
+        });
+        return;
+      }
 
       return res.json({
         status: "success",
@@ -994,6 +1027,9 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
 
       //FETCH COMPONENT DETAILS
       result.map(async (element) => {
+        const originalQty = parseFloat(element.dc_qty || 0);
+        const returnedQty = parseFloat(element.return_inward_qty || 0);
+        const pendingQty = parseFloat((originalQty - returnedQty).toFixed(4));
         material.push({
           serial_no: element.rowID,
           selectedComponent: [
@@ -1006,6 +1042,8 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
           hsn_code: element.dc_hsn,
           rate: element.dc_rate,
           qty: element.dc_qty,
+          returned_qty: returnedQty,
+          pending_qty: pendingQty < 0 ? 0 : pendingQty,
           remark: element.dc_remark,
           total: (element.dc_qty * element.dc_rate).toFixed(2),
         });
@@ -1042,17 +1080,12 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
         };
 
         if (material.length == result.length) {
-          return res.json({
-            status: "success",
+         res.json({
             success: true,
-            data: {
-              gp_type: gp_type_option,
-              material: material,
-              vendor: vendor,
-              other: other_details,
-              warehouse: warehouse,
-            },
+            status: "success",
+            data: { rgp_challan_no: result[0].dc_transaction, gp_type: gp_type_option, material: material, vendor: vendor, other: other_details, warehouse: warehouse },
           });
+          return;
         }
       });
     } else {
@@ -1558,6 +1591,502 @@ router.post("/fetch_dc", [auth.isAuthorized], async (req, res) => {
     return res.json(response);
   } catch (error) {
     return helper.errorResponse(res, error);
+  }
+});
+
+router.post("/fetchReturnableItems", [auth.isAuthorized], async (req, res) => {
+
+  const transactionRef = req.body.gp || req.body.gpcode || req.body.transaction;
+
+  const validation = new Validator(
+    { gp: transactionRef },
+    { gp: "required" }
+  );
+  if (validation.fails()) {
+    return res.json({ success: false, message:"something you missing in form field to supply", data: validation.errors.all(), status: "error" });
+  }
+
+  try {
+    const stmt = await invtDB.query(
+      `SELECT
+          dc.ID AS row_id,
+          dc.dc_transaction,
+          dc.dc_type,
+          dc.dc_status,
+          dc.component,
+          dc.dc_qty,
+          dc.return_inward_qty,
+          dc.dc_rate,
+          dc.dc_hsn,
+          dc.dc_remark,
+          dc.dc_vendor_details,
+          dc.dc_log,
+          c.c_part_no,
+          c.c_name,
+          u.units_name
+        FROM ims_dc_challan dc
+        LEFT JOIN components c ON c.component_key = dc.component
+        LEFT JOIN units u ON u.units_id = c.c_uom
+        WHERE dc.dc_transaction = :transaction AND dc.company_branch = :branch
+        ORDER BY dc.ID ASC`,
+      {
+        replacements: { transaction: transactionRef, branch: req.branch },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (stmt.length === 0) {
+      return res.json({ success: false, message: { msg: "no gate pass found against the given transaction id" }, status: "error" });
+    }
+
+    let vendorName = "--";
+    try {
+      const vendorDetails = JSON.parse(stmt[0].dc_vendor_details);
+      const ven = await invtDB.query("SELECT `ven_name`, `ven_register_id` FROM `ven_basic_detail` WHERE `ven_register_id` = :vendor_code", {
+        replacements: { vendor_code: vendorDetails.vendor_code },
+        type: invtDB.QueryTypes.SELECT,
+      });
+      if (ven.length > 0) {
+        vendorName = ven[0].ven_name + " (" + ven[0].ven_register_id + ")";
+      }
+    } catch (e) {
+      vendorName = "--";
+    }
+
+    const items = stmt.map((row) => {
+      const originalQty = parseFloat(row.dc_qty || 0);
+      const returnedQty = parseFloat(row.return_inward_qty || 0);
+      const pendingQty = parseFloat((originalQty - returnedQty).toFixed(4));
+      return {
+        row_id: row.row_id,
+        component_key: row.component,
+        component_name: row.c_name || "--",
+        part_no: row.c_part_no || "--",
+        unit: row.units_name || "--",
+        hsn: row.dc_hsn || "--",
+        rate: parseFloat(row.dc_rate || 0).toFixed(2),
+        original_qty: originalQty,
+        returned_qty: returnedQty,
+        pending_qty: pendingQty < 0 ? 0 : pendingQty,
+        remark: row.dc_remark || "--",
+      };
+    });
+
+    return res.json({
+      success: true,
+      status: "success",
+      response: {
+        transaction: stmt[0].dc_transaction,
+        vendor_name: vendorName,
+        items: items,
+      },
+    });
+  } catch (err) {
+    return res.json({ success: false, message:"Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
+  }
+});
+
+
+
+
+// 2) CREATE A RETURN AGAINST A GATE PASS
+router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
+  // `gp` / `transaction` is the actual gate pass this return is against -- this is what gets
+  // looked up AND what gets saved as `rgp_challan_no` on the return record.
+  const transactionRef = req.body.gp || req.body.transaction;
+  const other = req.body.other || {};
+  const material = req.body.material;
+
+  const validation = new Validator(
+    { gp: transactionRef },
+    { gp: "required" }
+  );
+  if (validation.fails()) {
+    return res.json({ success: false, message: "something you missing in form field to supply", data: validation.errors.all(), status: "error" });
+  }
+
+  if (!material || !Array.isArray(material.row_id) || material.row_id.length === 0) {
+    return res.json({ success: false, message:"at least one item is required to create a return", status: "error" });
+  }
+
+  const toFindDublicates = (arry) => arry.filter((item, index) => arry.indexOf(item) !== index);
+  const dubliEle = toFindDublicates(material.row_id);
+  if (dubliEle.length > 0) {
+    return res.json({ success: false, message:  "You have entered a same item twice of time in a single request", status: "error" });
+  }
+
+  const itemLength = material.row_id.length;
+  for (let i = 0; i < itemLength; i++) {
+    const validation_material = new Validator(
+      { row_id: material.row_id[i], qty: material.qty[i] },
+      { row_id: "required", qty: "required|min:1" }
+    );
+    if (validation_material.fails()) {
+      return res.json({ success: false, message: validation_material.errors.all(), status: "error" });
+    }
+  }
+
+  const t = await invtDB.transaction();
+
+  try {
+    // fetch original gate pass rows this return is against
+    const originalRows = await invtDB.query("SELECT * FROM `ims_dc_challan` WHERE `dc_transaction` = :transaction AND `company_branch` = :branch", {
+      replacements: { transaction: transactionRef, branch: req.branch },
+      type: invtDB.QueryTypes.SELECT,
+    });
+
+    if (originalRows.length === 0) {
+      t.rollback();
+      return res.json({ success: false, message: "no gate pass found against the given transaction id [" + transactionRef + "]" , status: "error" });
+    }
+
+    const originalRowsById = {};
+    originalRows.forEach((row) => {
+      originalRowsById[row.ID] = row;
+    });
+
+    // generate the new return transaction number
+    let stmt = await invtDB.query("SELECT * FROM `ims_numbering` WHERE `for_number` = 'REGP'", { type: invtDB.QueryTypes.SELECT });
+    await invtDB.query("UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number` = 'REGP'", { transaction: t, type: invtDB.QueryTypes.UPDATE });
+
+    let returnTransactionID;
+    if (stmt.length > 0) {
+      let suffix = parseInt(stmt[0].suffix) + 1;
+      suffix = suffix.toString().padStart(parseInt(stmt[0].number_length_limit), "0");
+      returnTransactionID = stmt[0].prefix + "/" + stmt[0].session + "/" + suffix;
+    } else {
+      let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
+      returnTransactionID = "RTN/" + currYear + "-" + (currYear + 1) + "/0001";
+    }
+
+    const dup = await invtDB.query("SELECT `return_transaction` FROM `ims_gatepass_return` WHERE `return_transaction` = :transaction LIMIT 1", {
+      replacements: { transaction: returnTransactionID },
+      type: invtDB.QueryTypes.SELECT,
+    });
+    if (dup.length > 0) {
+      t.rollback();
+      return res.json({
+        success: false,
+        message: "alloting transaction id as [" + returnTransactionID + "] for gate pass return has already exist with us, required manual checking or contact to system administrator.",
+        status: "error",
+      });
+    }
+
+    for (let i = 0; i < itemLength; i++) {
+      const rowId = material.row_id[i];
+      const returnQty = helper.number(material.qty[i]);
+      const originalRow = originalRowsById[rowId];
+
+      if (!originalRow) {
+        t.rollback();
+        return res.json({ success: false, message: "item [" + rowId + "] does not belong to the gate pass [" + transactionRef + "]" , status: "error" });
+      }
+
+      const pendingQty = helper.number(originalRow.dc_qty) - helper.number(originalRow.return_inward_qty || 0);
+
+      if (returnQty <= 0) {
+        t.rollback();
+        return res.json({ success: false, message:"return qty must be greater than 0", status: "error" });
+      }
+      if (returnQty > pendingQty) {
+        t.rollback();
+        return res.json({
+          success: false,
+          message: "you can return maximum [" + pendingQty + "] qty for component [" + originalRow.component + "], requested [" + returnQty + "]" ,
+          status: "error",
+        });
+      }
+
+      await invtDB.query(
+        "INSERT INTO `ims_gatepass_return` (`txn_session`,`company_branch`,`return_transaction`,`rgp_challan_no`,`ref_row_id`,`component`,`return_qty`,`return_rate`,`return_hsn`,`return_remark`,`return_log`) VALUES (:txn_session,:branch,:return_transaction,:rgp_challan_no,:ref_row_id,:component,:return_qty,:return_rate,:return_hsn,:return_remark,:return_log)",
+        {
+          replacements: {
+            txn_session: helper.generateTxnSession(),
+            branch: req.branch,
+            return_transaction: returnTransactionID,
+            rgp_challan_no: transactionRef,
+            ref_row_id: rowId,
+            component: originalRow.component,
+            return_qty: material.qty[i],
+            return_rate: originalRow.dc_rate,
+            return_hsn: originalRow.dc_hsn || "--",
+            return_remark: (material.remark && material.remark[i]) || "--",
+            return_log: JSON.stringify({
+              insert_by: req.logedINUser,
+              insert_date: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+              narration: other.narration || "--",
+              vehicle_no: other.vehicle_no || "--",
+            }),
+          },
+          type: invtDB.QueryTypes.INSERT,
+          transaction: t,
+        }
+      );
+
+      // keep the original gate pass line item's running "return_inward_qty" in sync
+      await invtDB.query(
+        "UPDATE `ims_dc_challan` SET `return_inward_qty` = CAST(COALESCE(`return_inward_qty`, 0) AS DECIMAL(18,4)) + CAST(:qty AS DECIMAL(18,4)) WHERE `ID` = :row_id",
+        {
+          replacements: { qty: material.qty[i], row_id: rowId },
+          type: invtDB.QueryTypes.UPDATE,
+          transaction: t,
+        }
+      );
+    }
+
+    await t.commit();
+    return res.json({ success: true, message: "Gate Pass Return Generated : RefID: " + returnTransactionID, status: "success", data: { txn: returnTransactionID } });
+  } catch (err) {
+    console.log()
+    t.rollback();
+    return res.json({ success: false, status: "error", message: "internally something happend wrong, contact to administrator" , error: err.stack });
+  }
+});
+
+// 3) FETCH ALL GATE PASS RETURNS (datewise / vendorwise)
+router.post("/fetchAllReturns", [auth.isAuthorized], async (req, res) => {
+  const searchBy = req.body.wise;
+  const searchValue = req.body.data;
+
+  const validation = new Validator(req.body, {
+    wise: "required",
+    data: "required",
+  });
+  if (validation.fails()) {
+    return res.json({ success: false, message:"something you missing in form field to supply" , data: validation.errors.all(), status: "error" });
+  }
+
+  try {
+    let stmt = [];
+    const baseSelect = `SELECT
+          ven.ven_name, ven.ven_register_id,
+          r.ID AS return_row_id,
+          r.return_transaction,
+          r.rgp_challan_no,
+          r.ref_row_id,
+          r.component,
+          r.return_qty,
+          r.return_rate,
+          r.return_hsn,
+          r.return_remark,
+          r.return_status,
+          r.return_log,
+          c.c_part_no,
+          c.c_name,
+          u.units_name
+        FROM ims_gatepass_return r
+        LEFT JOIN ims_dc_challan dc ON dc.ID = r.ref_row_id
+        LEFT JOIN ven_basic_detail ven ON ven.ven_register_id = JSON_UNQUOTE(JSON_EXTRACT(dc.dc_vendor_details, '$[0].vendor_code'))
+        LEFT JOIN components c ON c.component_key = r.component
+        LEFT JOIN units u ON u.units_id = c.c_uom`;
+
+    if (searchBy == "datewise") {
+      const date = searchValue.match(/([0-9]{2})-([0-9]{2})-([0-9]{4})/g);
+      if (!date || date.length < 2) {
+        return res.json({ success: false, message:"invalid date range supplied" , status: "error" });
+      }
+
+      const fromdate = moment(date[0], "DD-MM-YYYY").format("YYYY-MM-DD");
+      const todate = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
+      const durationInMonths = moment(date[1], "DD-MM-YYYY").diff(moment(date[0], "DD-MM-YYYY"), "months");
+      if (durationInMonths > 3) {
+        return res.json({ status: "error", message: "on the w.e.f Nov 11, 2021: We can provide you 90 days OR (3 months) data only", success: false });
+      }
+
+      stmt = await invtDB.query(
+        `${baseSelect}
+        WHERE (STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(r.return_log, '$[0].insert_date')), '%Y-%m-%d') BETWEEN :datefrom AND :dateto)
+          AND r.return_status = 'ACTIVE'
+          AND r.company_branch = :branch
+        ORDER BY r.return_transaction DESC, r.ID DESC`,
+        { replacements: { datefrom: fromdate, dateto: todate, branch: req.branch }, type: invtDB.QueryTypes.SELECT }
+      );
+    } else if (searchBy == "vendorwise") {
+      stmt = await invtDB.query(
+        `${baseSelect}
+        WHERE r.return_status = 'ACTIVE'
+          AND r.company_branch = :branch
+          AND (ven.ven_name LIKE CONCAT('%', :vendor, '%') OR ven.ven_register_id LIKE CONCAT('%', :vendor, '%'))
+        ORDER BY r.return_transaction DESC, r.ID DESC`,
+        { replacements: { vendor: searchValue, branch: req.branch }, type: invtDB.QueryTypes.SELECT }
+      );
+    } else {
+      return res.json({ success: false, message:"Please select valid filter method", status: "error" });
+    }
+
+    if (stmt.length === 0) {
+      return res.json({ success: false, message:  "no gate pass return were found that match the given search criteria", status: "error" });
+    }
+
+    const finalResult = stmt.map((element, index) => {
+      let insertDate = "--";
+      try {
+        insertDate = moment(JSON.parse(element.return_log).insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss");
+      } catch (e) {
+        insertDate = "--";
+      }
+      const lineTotal = (parseFloat(element.return_qty || 0) * parseFloat(element.return_rate || 0)).toFixed(2);
+
+      return {
+        serial_no: index + 1,
+        return_date: insertDate,
+        return_qty: parseFloat(element.return_qty || 0),
+        rgp_challan_no: element.rgp_challan_no,
+        item: element.c_name || "--",
+        remarks: element.return_remark || "--",
+        //
+        insert_date: insertDate,
+        return_transaction: element.return_transaction,
+        against_transaction: element.rgp_challan_no,
+        vendor_name: element.ven_name ? element.ven_name + " (" + element.ven_register_id + ")" : "--",
+        part_no: element.c_part_no || "--",
+        component_name: element.c_name || "--",
+        component_key: element.component,
+        quantity: parseFloat(element.return_qty || 0),
+        rate: parseFloat(element.return_rate || 0).toFixed(2),
+        unit: element.units_name || "--",
+        hsn: element.return_hsn || "--",
+        remark: element.return_remark || "--",
+        line_total: lineTotal,
+      };
+    });
+
+    return res.json({ success: true, status: "success", response: { data: finalResult, total_records: finalResult.length } });
+  } catch (err) {
+    console.log(err);
+    return res.json({ success: false, message: "Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
+  }
+});
+
+
+router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) => {
+  const vendor = req.body.vendor; // required -- vendor code or vendor name (partial match)
+  const searchValue = req.body.data; // required -- "DD-MM-YYYY-DD-MM-YYYY"
+
+  const validation = new Validator(req.body, {
+    vendor: "required",
+    data: "required",
+  });
+  if (validation.fails()) {
+    return res.json({ success: false, message:"something you missing in form field to supply" , data: validation.errors.all(), status: "error" });
+  }
+
+  const ARCHIVE_CUTOFF_DATE = "2026-09-01"; // transactions before this date are archived and not served here
+
+  try {
+    const date = searchValue.match(/([0-9]{2})-([0-9]{2})-([0-9]{4})/g);
+    if (!date || date.length < 2) {
+      return res.json({ success: false, message: "invalid date range supplied" , status: "error" });
+    }
+
+    const fromdate = moment(date[0], "DD-MM-YYYY").format("YYYY-MM-DD");
+    const todate = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
+    const durationInDays = moment(date[1], "DD-MM-YYYY").diff(moment(date[0], "DD-MM-YYYY"), "days");
+    if (durationInDays > 366) {
+      return res.json({ status: "error", message: "We can provide you 1 year (366 days) data only", success: false });
+    }
+
+    if (fromdate < ARCHIVE_CUTOFF_DATE) {
+      return res.json({
+        success: false,
+        message:"transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived",
+        status: "error",
+      });
+    }
+
+    const vendorFilter = "AND (ven.ven_name LIKE CONCAT('%', :vendor, '%') OR ven.ven_register_id LIKE CONCAT('%', :vendor, '%'))";
+
+    // OUTWARD side: every DC (gate pass) *created* inside the date range, for this vendor
+    const outwardRows = await invtDB.query(
+      `SELECT
+          ven.ven_name,
+          ven.ven_register_id,
+          dc.component,
+          c.c_part_no,
+          c.c_name,
+          u.units_name,
+          SUM(CAST(dc.dc_qty AS DECIMAL(18,4))) AS total_outward
+        FROM ims_dc_challan dc
+        LEFT JOIN ven_basic_detail ven ON ven.ven_register_id = JSON_UNQUOTE(JSON_EXTRACT(dc.dc_vendor_details, '$[0].vendor_code'))
+        LEFT JOIN components c ON c.component_key = dc.component
+        LEFT JOIN units u ON u.units_id = c.c_uom
+        WHERE dc.company_branch = :branch
+          AND dc.dc_status = 'ACTIVE'
+          AND (STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(dc.dc_log, '$[0].insert_date')), '%Y-%m-%d') BETWEEN :datefrom AND :dateto)
+          ${vendorFilter}
+        GROUP BY ven.ven_register_id, dc.component`,
+      { replacements: { branch: req.branch, datefrom: fromdate, dateto: todate, vendor: vendor }, type: invtDB.QueryTypes.SELECT }
+    );
+
+    // RETURNED side: every return *created* inside the date range, for this vendor
+    // (independent of when the original DC/gate pass was created)
+    const returnedRows = await invtDB.query(
+      `SELECT
+          ven.ven_name,
+          ven.ven_register_id,
+          r.component,
+          c.c_part_no,
+          c.c_name,
+          u.units_name,
+          SUM(CAST(r.return_qty AS DECIMAL(18,4))) AS total_returned
+        FROM ims_gatepass_return r
+        LEFT JOIN ims_dc_challan dc ON dc.ID = r.ref_row_id
+        LEFT JOIN ven_basic_detail ven ON ven.ven_register_id = JSON_UNQUOTE(JSON_EXTRACT(dc.dc_vendor_details, '$[0].vendor_code'))
+        LEFT JOIN components c ON c.component_key = r.component
+        LEFT JOIN units u ON u.units_id = c.c_uom
+        WHERE r.company_branch = :branch
+          AND r.return_status = 'ACTIVE'
+          AND (STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(r.return_log, '$[0].insert_date')), '%Y-%m-%d') BETWEEN :datefrom AND :dateto)
+          ${vendorFilter}
+        GROUP BY ven.ven_register_id, r.component`,
+      { replacements: { branch: req.branch, datefrom: fromdate, dateto: todate, vendor: vendor }, type: invtDB.QueryTypes.SELECT }
+    );
+
+    if (outwardRows.length === 0 && returnedRows.length === 0) {
+      return res.json({ success: false, message: "no gate pass transaction were found that match the given search criteria", status: "error" });
+    }
+
+    // merge both sides keyed by vendor + component -- a component might have
+    // outward activity, returned activity, or both within the given window
+    const merged = {};
+    const upsert = (row, field, qtyField) => {
+      const key = row.ven_register_id + "|" + row.component;
+      if (!merged[key]) {
+        merged[key] = {
+          ven_name: row.ven_name,
+          ven_register_id: row.ven_register_id,
+          c_name: row.c_name,
+          c_part_no: row.c_part_no,
+          units_name: row.units_name,
+          total_outward: 0,
+          total_returned: 0,
+        };
+      }
+      merged[key][field] = parseFloat(row[qtyField] || 0);
+    };
+    outwardRows.forEach((row) => upsert(row, "total_outward", "total_outward"));
+    returnedRows.forEach((row) => upsert(row, "total_returned", "total_returned"));
+
+    const finalResult = Object.values(merged)
+      .sort((a, b) => (a.ven_name || "").localeCompare(b.ven_name || "") || (a.c_name || "").localeCompare(b.c_name || ""))
+      .map((element, index) => {
+        const outward = parseFloat(element.total_outward || 0);
+        const returned = parseFloat(element.total_returned || 0);
+        return {
+          serial_no: index + 1,
+          vendor: element.ven_name ? element.ven_name + " (" + element.ven_register_id + ")" : "--",
+          item: element.c_name || "--",
+          part_no: element.c_part_no || "--",
+          unit: element.units_name || "--",
+          outward: outward,
+          returned: returned,
+          balance: parseFloat((outward - returned).toFixed(4)),
+        };
+      });
+
+    return res.json({ success: true, status: "success", response: { data: finalResult, total_records: finalResult.length } });
+  } catch (err) {
+    return res.json({ success: false, message:"Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
   }
 });
 
