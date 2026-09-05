@@ -2084,7 +2084,7 @@ router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) =
         };
       });
 
-    return res.json({ success: true, status: "success", response: { data: finalResult, total_records: finalResult.length } });
+    return res.json({ success: true, status: "success",  data: finalResult, total_records: finalResult.length  });
   } catch (err) {
     return res.json({ success: false, message:"Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
   }
