@@ -406,20 +406,20 @@ router.post(
         return;
       }
 
-      if (
-        !helper.preg_match(
-          /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
-          req.body.duedate[i]
-        ) &&
-        req.body.duedate[i] != ""
-      ) {
-        res.json({
-          success: false,
-          message: "Please select valid due date in DD-MM-YYYY",
-          status: "error",
-        });
-        return;
-      }
+      // if (
+      //   !helper.preg_match(
+      //     /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
+      //     req.body.duedate[i]
+      //   ) &&
+      //   req.body.duedate[i] != ""
+      // ) {
+      //   res.json({
+      //     success: false,
+      //     message: "Please select valid due date in DD-MM-YYYY",
+      //     status: "error",
+      //   });
+      //   return;
+      // }
     }
 
     if (req.body.pocostcenter == null) {
@@ -2223,32 +2223,33 @@ router.post(
                     message: "PO Due Date couldn't be other than DD-MM-YYYY",
                     success: false,
                   });
-                } else if (
-                  moment(req.body.date[i], "DD-MM-YYYY").diff(
-                    moment(new Date(), "DD-MM-YYYY"),
-                    "days"
-                  ) < 0
-                ) {
-                  await t.rollback();
-                  return res.json({
-                    status: "error",
-                    message:
-                      "PO Due Date couldn't be less than PO creating date",
-                    success: false,
-                  });
-                } else if (
-                  moment(req.body.date[i], "DD-MM-YYYY").diff(
-                    moment(new Date(), "DD-MM-YYYY"),
-                    "days"
-                  ) == 0
-                ) {
-                  await t.rollback();
-                  return res.json({
-                    status: "error",
-                    message:
-                      "PO Due Date couldn't be equal to PO creating date",
-                    success: false,
-                  });
+                // } 
+                // else if (
+                //   moment(req.body.date[i], "DD-MM-YYYY").diff(
+                //     moment(new Date(), "DD-MM-YYYY"),
+                //     "days"
+                //   ) < 0
+                // ) {
+                //   await t.rollback();
+                //   return res.json({
+                //     status: "error",
+                //     message:
+                //       "PO Due Date couldn't be less than PO creating date",
+                //     success: false,
+                //   });
+                // } else if (
+                //   moment(req.body.date[i], "DD-MM-YYYY").diff(
+                //     moment(new Date(), "DD-MM-YYYY"),
+                //     "days"
+                //   ) == 0
+                // ) {
+                //   await t.rollback();
+                //   return res.json({
+                //     status: "error",
+                //     message:
+                //       "PO Due Date couldn't be equal to PO creating date",
+                //     success: false,
+                //   });
                 } else {
                   let stmt5 = await invtDB.query(
                     "SELECT * FROM `components` WHERE `component_key` = :component_key",
