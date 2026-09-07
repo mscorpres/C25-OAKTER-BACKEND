@@ -16,6 +16,53 @@ const uniqueFileName = () => {
   const timestamp = Date.now();
   return `${uniqueId}_${timestamp}.xml`;
 };
+
+async function getFgPickLocationStockQty(sku, productKey, location, branch, transaction = null) {
+  const queryOptions = {
+    replacements: { sku, product_key: productKey, location, branch },
+    type: invtDB.QueryTypes.SELECT,
+  };
+
+  if (transaction) {
+    queryOptions.transaction = transaction;
+  }
+
+  const stockRows = await invtDB.query(
+    `SELECT
+      COALESCE(SUM(
+        CASE
+          WHEN type IN ('IN', 'FGMIN', 'TRANSFER')
+            AND mfg_pro_location_in = :location
+          THEN COALESCE(mfg_approve_in_qty, 0)
+          ELSE 0
+        END
+      ), 0) -
+      COALESCE(SUM(
+        CASE
+          WHEN type = 'OUT'
+            AND fgout_pro_location_out = :location
+          THEN COALESCE(fgout_approve_out_qty, 0)
+          WHEN type = 'TRANSFER'
+            AND fgout_pro_location_out = :location
+          THEN COALESCE(mfg_approve_in_qty, 0)
+          ELSE 0
+        END
+      ), 0) AS available_qty
+    FROM mfg_production_3
+    WHERE fg_status = 'ACTIVE'
+      AND company_branch = :branch
+      AND (
+        (mfg_pro_apr_sku = :sku AND type IN ('IN', 'FGMIN', 'TRANSFER'))
+        OR (fgout_pro_apr_sku = :product_key AND type = 'OUT')
+      )`,
+    queryOptions
+  );
+
+  const availableQty = stockRows.length ? helper.number(stockRows[0].available_qty) : 0;
+  return availableQty < 0 ? 0 : availableQty;
+}
+
+
 //RM - RM AND SF - SF Transactions List
 router.post("/xml_report_rmsf_same", async (req, res) => {
   const searchBy = req.body.wise;
@@ -2615,27 +2662,44 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
       const prod = prodRows[0];
 
       // LOCATION STOCK AT PICK LOCATION (same logic as godownStocksProduct)
-      const inStmt = await invtDB.query(
-        "SELECT COALESCE(SUM(`mfg_approve_in_qty`), 0) AS `Inward` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN ('IN', 'FGMIN') AND `fg_status` = 'ACTIVE' AND `mfg_pro_location_in` = :location",
-        {
-          replacements: { sku: prod.p_sku, location: pickLocation },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t,
-        }
-      );
+      // const inStmt = await invtDB.query(
+      //   "SELECT COALESCE(SUM(`mfg_approve_in_qty`), 0) AS `Inward` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN ('IN', 'FGMIN') AND `fg_status` = 'ACTIVE' AND `mfg_pro_location_in` = :location",
+      //   {
+      //     replacements: { sku: prod.p_sku, location: pickLocation },
+      //     type: invtDB.QueryTypes.SELECT,
+      //     transaction: t,
+      //   }
+      // );
 
-      const outStmt = await invtDB.query(
-        "SELECT COALESCE(SUM(`fgout_approve_out_qty`), 0) AS `Outward` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE' AND `fgout_pro_location_out` = :location",
-        {
-          replacements: { product_key: product[i], location: pickLocation },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t,
-        }
-      );
+      // const outStmt = await invtDB.query(
+      //   "SELECT COALESCE(SUM(`fgout_approve_out_qty`), 0) AS `Outward` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE' AND `fgout_pro_location_out` = :location",
+      //   {
+      //     replacements: { product_key: product[i], location: pickLocation },
+      //     type: invtDB.QueryTypes.SELECT,
+      //     transaction: t,
+      //   }
+      // );
 
-      const inward = inStmt.length ? helper.number(inStmt[0].Inward) : 0;
-      const outward = outStmt.length ? helper.number(outStmt[0].Outward) : 0;
-      const availableQty = inward - outward;
+      // const inward = inStmt.length ? helper.number(inStmt[0].Inward) : 0;
+      // const outward = outStmt.length ? helper.number(outStmt[0].Outward) : 0;
+      // const availableQty = inward - outward;
+
+      // if (transferQty > availableQty) {
+      //   await t.rollback();
+      //   return res.json({
+      //     success: false,
+      //     status: "error",
+      //     message: `Insufficient FG stock for product ${prod.p_name} (${prod.p_sku}) at pick location. Current Stock [${availableQty}]`,
+      //   });
+      // }
+
+       const availableQty = await getFgPickLocationStockQty(
+        prod.p_sku,
+        product[i],
+        pickLocation,
+        fromBranch,
+        t
+      );
 
       if (transferQty > availableQty) {
         await t.rollback();
@@ -2656,11 +2720,12 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
 
       // OUT from pick location (mfg_production_3 + fg_location) - fg_out_type kept neutral ('--') for pure transfer
       const outInsert = await invtDB.query(
-        "INSERT INTO `mfg_production_3` (`company_branch`,`fgout_pro_apr_sku`,`fgout_approve_out_qty`,`fgout_pro_apr_by`,`fgout_pro_apr_date`,`fgout_pro_apr_fulldate`, `fgout_pro_location_out`,`mfg_pro_FGout_transaction`,`type`,`fg_out_type`,`fg_out_remark`)VALUES (:branch,:sku,:aproutqty,:outby,:outdate,:outfulldate, :fgout_pro_location_out,:transactioncode,:type, :fg_out_type,:remark)",
+        "INSERT INTO `mfg_production_3` (`company_branch`,`fgout_pro_apr_sku`,`mfg_pro_apr_bom`,`fgout_approve_out_qty`,`fgout_pro_apr_by`,`fgout_pro_apr_date`,`fgout_pro_apr_fulldate`, `fgout_pro_location_out`,`mfg_pro_FGout_transaction`,`type`,`fg_out_type`,`fg_out_remark`)VALUES (:branch,:sku,:bom,:aproutqty,:outby,:outdate,:outfulldate, :fgout_pro_location_out,:transactioncode,:type, :fg_out_type,:remark)",
         {
           replacements: {
             branch: fromBranch,
             sku: product[i],
+            bom: req.body.bom,
             aproutqty: transferQty,
             outby: req.logedINUser,
             outdate: nowDate,
@@ -2686,10 +2751,11 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
       }
 
       const fgOutLocInsert = await invtDB.query(
-        "INSERT INTO `fg_location` (`fg_type`,`sku_code`, `fg_loc_out`,`qty`,`insert_dt`,`insert_by`,`fg_out_transaction`) VALUES ('OUT',:sku_code, :fg_loc_out,:fg_qty, :fg_insert_dt,:fg_insert_by,:out_id)",
+        "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_bom`, `fg_loc_out`,`qty`,`insert_dt`,`insert_by`,`fg_out_transaction`) VALUES ('OUT',:sku_code,:bom, :fg_loc_out,:fg_qty, :fg_insert_dt,:fg_insert_by,:out_id)",
         {
           replacements: {
             sku_code: product[i],
+            bom: req.body.bom,
             fg_qty: transferQty,
             fg_loc_out: pickLocation,
             fg_insert_dt: nowFull,
@@ -2712,11 +2778,12 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
 
       // IN to drop location (mfg_production_3 + fg_location) — store drop in mfg_pro_location_in, pick (source) in fgout_pro_location_out
       const inInsert = await invtDB.query(
-        "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`fgout_pro_location_out`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`in_fg_rate`) VALUES (:branch,:sku, :totalIn, :by, :fulldate, :transaction, :ppr_id, :mfg_id, :loc_in, :fgout_loc_out, :insertdate,'TRANSFER', :pprcreatedby, :mfgcreatedby, :rate)",
+        "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_pro_apr_bom`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`fgout_pro_location_out`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`in_fg_rate`) VALUES (:branch,:sku,:bom, :totalIn, :by, :fulldate, :transaction, :ppr_id, :mfg_id, :loc_in, :fgout_loc_out, :insertdate,'TRANSFER', :pprcreatedby, :mfgcreatedby, :rate)",
         {
           replacements: {
             branch: fromBranch,
             sku: prod.p_sku,
+            bom: req.body.bom,
             totalIn: transferQty,
             by: req.logedINUser,
             fulldate: nowFull,
