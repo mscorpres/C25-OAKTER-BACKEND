@@ -125,6 +125,92 @@ router.post("/fetchProductData", [auth.isAuthorized], async (req, res) => {
   }
 });
 
+
+router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
+  let validation = new Validator(req.body, {
+    search: "required",
+  });
+
+  if (validation.fails()) {
+    return res.json({
+      code: 500,
+      massage: { msg: helper.firstErrorValidatorjs(validation) },
+      status: "error",
+    });
+  }
+
+  try {
+    // Step 1: Resolve product_key → product info first
+    let prod_stmt = await invtDB.query(
+      "SELECT * FROM `products` LEFT JOIN `units` ON `products`.`p_uom` = `units`.`units_id` WHERE `product_key` = :productKey",
+      {
+        replacements: { productKey: req.body.search },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (prod_stmt.length === 0) {
+      return res.json({
+        code: 500,
+        status: "error",
+        message: { msg: "No Product Found" },
+      });
+    }
+
+    const product = prod_stmt[0];
+    const resolvedSku = product.p_sku;
+    const product_name = product.p_name;
+    const product_sku = product.p_sku;
+    const uom = product.units_name;
+
+    // Step 2: Fetch BOM using resolved SKU
+    let stmt = await invtDB.query(
+      "SELECT `subject_id`,`subject_name` FROM `bom_recipe` WHERE `bom_product_sku` = :skucode AND bom_status = 'ENABLE'",
+      {
+        replacements: { skucode: resolvedSku },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    if (stmt.length === 0) {
+      return res.json({
+        code: 500,
+        status: "error",
+        message: { msg: "No Bom Found" },
+      });
+    }
+
+    let boms = stmt.map((item) => ({ id: item.subject_id, text: item.subject_name }));
+
+    const result = {
+      // product_name,
+      // product_sku,
+      // uom,
+      boms,
+    }
+
+    return res.json({
+      code: 200,
+      status: "success",
+      data: boms,
+      // other: {
+      //   product_name,
+      //   product_sku,
+      //   uom,
+      // },
+      // bom: boms,
+    });
+
+  } catch (err) {
+    return res.json({
+      code: 500,
+      status: "error",
+      message: { msg: "Internal Error!!! If this condition persists, contact your system administrator" },
+      error: err.stack,
+    });
+  }
+});
+
 router.post(
   "/createPPR",
   [auth.isAuthorized, auth.checkDuplicacy_db],

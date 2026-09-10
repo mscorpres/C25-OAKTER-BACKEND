@@ -6,7 +6,30 @@ let { invtDB } = require("../../../../config/db/connection");
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 const Validator = require("validatorjs");
-const FG_RETURN_TRANSFER_LOCATION = "1767419450594";
+const FG_RETURN_TRANSFER_LOCATION = "1788943506425";
+
+
+async function getFgTransferStockQty(sku, branch, locationKey, transaction) {
+  const stockRows = await invtDB.query(
+    `SELECT
+      COALESCE(SUM(CASE WHEN mfg_pro_location_in = :locationKey THEN COALESCE(mfg_approve_in_qty, 0) ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN fgout_pro_location_out = :locationKey THEN COALESCE(mfg_approve_in_qty, 0) ELSE 0 END), 0) AS net_qty
+    FROM mfg_production_3
+    WHERE type = 'TRANSFER'
+      AND fg_status = 'ACTIVE'
+      AND (company_branch = :branch OR :branch IS NULL)
+      AND mfg_pro_apr_sku = :sku
+      AND (mfg_pro_location_in = :locationKey OR fgout_pro_location_out = :locationKey)`,
+    {
+      replacements: { locationKey, branch, sku },
+      type: invtDB.QueryTypes.SELECT,
+      transaction,
+    }
+  );
+
+  return stockRows.length ? helper.number(stockRows[0].net_qty) : 0;
+}
+
 
 // SAVE FG RETURN
 router.post("/saveFG_return", [auth.isAuthorized], async (req, res) => {
@@ -127,7 +150,7 @@ router.post("/fetchFG_returnlist", [auth.isAuthorized], async (req, res) => {
         m3.ID,
         m3.mfg_pro_apr_sku,
         m3.mfg_pro_apr_bom,
-        COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) AS qty_return,
+        COALESCE(NULLIF(m3.qty_return, 0), m3.mfg_approve_in_qty, 0) AS qty_return,
         COALESCE(m3.executed_qty, 0) AS executed_qty,
         m3.mfg_pro_location_in,
         m3.fg_status,
@@ -166,7 +189,7 @@ router.post("/fetchFG_returnlist", [auth.isAuthorized], async (req, res) => {
         AND m3.fg_status = 'ACTIVE'
         AND m3.company_branch = :branch
         AND m3.mfg_pro_location_in = :locationKey
-        AND COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) > COALESCE(m3.executed_qty, 0)
+        AND COALESCE(NULLIF(m3.qty_return, 0), m3.mfg_approve_in_qty, 0) > COALESCE(m3.executed_qty, 0)
       ORDER BY m3.mfg_pro_apr_fulldate DESC, m3.ID DESC`,
       {
         replacements: { locationKey, branch },
@@ -212,7 +235,12 @@ router.post("/fetchFG_returnlist", [auth.isAuthorized], async (req, res) => {
     });
   } catch (err) {
     console.log(err);
-    return res.json({ success: false, data: null, message: "Internal Error !!! If this condition persists, contact your system administrator", error: err.stack });
+    return res.json({
+      success: false,
+      data: null,
+      message: "Internal Error !!! If this condition persists, contact your system administrator",
+      error: err.stack,
+    });
   }
 });
 
@@ -550,7 +578,7 @@ router.post("/executeFG_reversal", [auth.isAuthorized], async (req, res) => {
       message: "Internal Error !!! If this condition persists, contact your system administrator",
     });
   } catch (err) {
-    //console.log(err);
+    console.log(err);
     await transaction.rollback();
     return res.json({
       success: false,
@@ -566,7 +594,7 @@ router.post("/fetchReturnCompleted", [auth.isAuthorized], async (req, res) => {
     date: "required",
   });
   if (validation.fails()) {
-    return res.status(400).json({ success: false, message: helper.firstErrorValidatorjs(validation) } );
+    return res.status(400).json({ success: false, message: { msg: helper.firstErrorValidatorjs(validation) } });
   }
 
   try {
@@ -579,7 +607,7 @@ router.post("/fetchReturnCompleted", [auth.isAuthorized], async (req, res) => {
         m3.mfg_pro_apr_transaction,
         m3.mfg_pro_apr_sku,
         m3.mfg_pro_apr_fulldate,
-        COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) AS qty_return,
+        COALESCE(NULLIF(m3.qty_return, 0), m3.mfg_approve_in_qty, 0) AS qty_return,
         COALESCE(m3.executed_qty, 0) AS executed_qty,
         m3.fg_out_remark,
         products.p_name,
@@ -592,8 +620,8 @@ router.post("/fetchReturnCompleted", [auth.isAuthorized], async (req, res) => {
         AND m3.fg_status = 'ACTIVE'
         AND m3.company_branch = :branch
         AND m3.mfg_pro_location_in = :locationKey
-        AND COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) > 0
-        AND COALESCE(m3.executed_qty, 0) >= COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0)
+        AND COALESCE(NULLIF(m3.qty_return, 0), m3.mfg_approve_in_qty, 0) > 0
+        AND COALESCE(m3.executed_qty, 0) >= COALESCE(NULLIF(m3.qty_return, 0), m3.mfg_approve_in_qty, 0)
         AND DATE_FORMAT(m3.mfg_pro_apr_fulldate, '%Y-%m-%d') BETWEEN :date1 AND :date2
       ORDER BY m3.mfg_pro_apr_fulldate DESC, m3.ID DESC`,
       {
@@ -608,7 +636,7 @@ router.post("/fetchReturnCompleted", [auth.isAuthorized], async (req, res) => {
     );
 
     if (stmt.length == 0) {
-      return res.json({ success: false, message: "No data found" });
+      return res.status(500).json({ success: false, message: "No data found" });
     }
 
     const data = stmt.map((item) => ({
@@ -624,9 +652,9 @@ router.post("/fetchReturnCompleted", [auth.isAuthorized], async (req, res) => {
       remarks: item.fg_out_remark || "--",
     }));
 
-    return res.json({ success: true, data: data });
+    return res.status(200).json({ success: true, data: data });
   } catch (err) {
-    return res.json({ success: false, message: "Internal Error !!! If this condition persists, contact your system administrator", err: err.stack });
+    return res.status(500).json({ success: false, message: "Internal Error !!! If this condition persists, contact your system administrator", err: err.stack });
   }
 });
 

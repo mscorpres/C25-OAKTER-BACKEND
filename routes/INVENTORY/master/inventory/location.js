@@ -191,7 +191,7 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
 
   if (req.logedINUser !== "CRN301718") {
     return res.json({
-      code: 500,
+      success:false,
       message: "You are not authorized to add location" ,
       status: "error",
     });

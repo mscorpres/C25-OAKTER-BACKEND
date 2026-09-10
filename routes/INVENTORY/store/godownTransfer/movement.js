@@ -33,7 +33,7 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
         CASE
           WHEN type IN ('IN', 'FGMIN', 'TRANSFER')
             AND mfg_pro_location_in = :location
-          THEN COALESCE(mfg_approve_in_qty, 0)
+            THEN COALESCE(mfg_approve_in_qty, 0)
           ELSE 0
         END
       ), 0) -
@@ -41,10 +41,7 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
         CASE
           WHEN type = 'OUT'
             AND fgout_pro_location_out = :location
-          THEN COALESCE(fgout_approve_out_qty, 0)
-          WHEN type = 'TRANSFER'
-            AND fgout_pro_location_out = :location
-          THEN COALESCE(mfg_approve_in_qty, 0)
+            THEN COALESCE(fgout_approve_out_qty, 0)
           ELSE 0
         END
       ), 0) AS available_qty
@@ -1237,7 +1234,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     res.json({
-      success: false,
+      code: 500,
       message: "something you missing in form field to supply",
       data: validation.errors.all(),
       status: "error",
@@ -1257,47 +1254,26 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
     console.log("[godownStocksProduct] product fetch stmt0 length:", stmt0.length, "row:", stmt0[0] ? { p_sku: stmt0[0].p_sku, product_key: stmt0[0].product_key, p_name: stmt0[0].p_name } : null);
     if (stmt0.length <= 0) {
       return res.json({
-        success: false,
-        message: "unregistered product found",
+        code: 500,
+        message:"unregistered product found",
         status: "error",
       });
     }
 
-    // STOCK CALCULATION: match fetchSKU_logs (global product stock, r5-style IN-OUT)
-    // DEBIT (OUT) balance: all OUT for this product, any location
-    const debitStmt = await invtDB.query(
-      "SELECT COALESCE(SUM(`fgout_approve_out_qty`),0) AS `DebitBalance` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE'",
-      {
-        replacements: { product_key: req.body.product },
-        type: invtDB.QueryTypes.SELECT,
-      }
+    const pickLocation = req.body.location;
+    const productKey = req.body.product;
+    const productSku = stmt0[0].p_sku;
+    const available_qty = await getFgPickLocationStockQty(
+      productSku,
+      productKey,
+      pickLocation,
+      req.branch
     );
-    let debitBal = 0;
-    if (debitStmt.length > 0) {
-      debitBal = helper.number(debitStmt[0].DebitBalance || 0);
-    }
-
-    // CREDIT (IN) balance: all IN/FGMIN for this SKU, any location
-    const creditStmt = await invtDB.query(
-      "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYin` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN') AND `fg_status` = 'ACTIVE'",
-      {
-        replacements: { sku: stmt0[0].p_sku },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
-    let creditBal = 0;
-    if (creditStmt.length > 0) {
-      creditBal = helper.number(creditStmt[0].totalQTYin || 0);
-    }
-
-    const available_qty = helper.number(creditBal - debitBal);
     console.log(
-      "[godownStocksProduct] stock calc (global, fetchSKU_logs style): creditBal - debitBal =",
-      creditBal,
-      "-",
-      debitBal,
-      "= available_qty",
-      available_qty
+      "[godownStocksProduct] stock calc (pick location): available_qty =",
+      available_qty,
+      "location:",
+      pickLocation
     );
 
     if (
@@ -1305,7 +1281,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
       !stmt0[0].units_name
     ) {
       return res.json({
-        success: false,
+        code: 500,
         message: "product can not be transferred bcz seems it is not available in stock yet",
         status: "error",
       });
@@ -1318,26 +1294,25 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
     );
 
     return res.json({
-      success: true,
+      success:true,
       status: "success",
       data: {
         name: stmt0[0].p_name,
         key: stmt0[0].product_key,
         unit: stmt0[0].units_name,
-        available_qty: available_qty < 0 ? 0 : helper.number(available_qty),
+        available_qty: helper.number(available_qty),
         avr_rate: avr_rate,
       },
     });
   } catch (err) {
     return res.json({
       success: false,
-      message: "API Error: contact system administrator",
+      message: "API Error: contact system administrator" ,
       status: "error",
       error: err.stack,
     });
   }
 });
-
 //RM - RM AND SF - SF Transactions List
 // router.post("/report_rmsf_same", [auth.isAuthorized], async (req, res) => {
 //   const searchBy = req.body.wise;
