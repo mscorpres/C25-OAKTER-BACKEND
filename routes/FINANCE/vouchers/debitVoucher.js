@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
-
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 const Validator = require("validatorjs");
-const { tallyDB } = require("../../../config/db/connection");
+const { tallyDB,invtDB } = require("../../../config/db/connection");
 const htmlToPdf = require("html-pdf-node");
-
+const xlsx = require("xlsx");
 
 // create debit voucher
 router.post("/createDebitVoucher", [auth.isAuthorized], async (req, res) => {
@@ -118,7 +120,7 @@ router.post("/debitVoucherList", [auth.isAuthorized], async (req, res) => {
             const date2 = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
 
             main_stmt = await tallyDB.query(
-                "SELECT `module_used`, `ref_date`, `which_module`, `ledger_data_status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key` WHERE (DATE_FORMAT(`tally_ledger_data`.`insert_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2) AND `which_module` = 'DE'",
+                "SELECT `module_used`, `ref_date`, `which_module`, `DN_Status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key` WHERE (DATE_FORMAT(`tally_ledger_data`.`insert_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2) AND `which_module` = 'DE'",
                 {
                     replacements: { date1: date1, date2: date2 },
                     type: tallyDB.QueryTypes.SELECT,
@@ -131,7 +133,7 @@ router.post("/debitVoucherList", [auth.isAuthorized], async (req, res) => {
             const date2 = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
 
             main_stmt = await tallyDB.query(
-                "SELECT `module_used`, `ref_date`, `which_module`, `ledger_data_status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key` WHERE (DATE_FORMAT(`tally_ledger_data`.`ref_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2) AND `which_module` = 'DE'",
+                "SELECT `module_used`, `ref_date`, `which_module`, `DN_Status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key` WHERE (DATE_FORMAT(`tally_ledger_data`.`ref_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2) AND `which_module` = 'DE'",
                 {
                     replacements: { date1: date1, date2: date2 },
                     type: tallyDB.QueryTypes.SELECT,
@@ -140,7 +142,7 @@ router.post("/debitVoucherList", [auth.isAuthorized], async (req, res) => {
         }
         if (wise == "code_wise") {
             main_stmt = await tallyDB.query(
-                "SELECT `module_used`, `ref_date`, `which_module`, `ledger_data_status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key`  WHERE `module_used` = :data  AND `which_module` = 'DE'",
+                "SELECT `module_used`, `ref_date`, `which_module`, `DN_Status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key`  WHERE `module_used` = :data  AND `which_module` = 'DE'",
                 {
                     replacements: { data: data },
                     type: tallyDB.QueryTypes.SELECT,
@@ -149,7 +151,7 @@ router.post("/debitVoucherList", [auth.isAuthorized], async (req, res) => {
         }
         if (wise == "vendor_wise") {
             main_stmt = await tallyDB.query(
-                "SELECT `module_used`, `ref_date`, `which_module`, `ledger_data_status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key`  WHERE tally_ledger_data.ladger_key = :data  AND `which_module` = 'DE'",
+                "SELECT `module_used`, `ref_date`, `which_module`, `DN_Status` as status, `ledegr`.`ladger_name` as account,`ledegr`.`code` as account_code, `tally_ledger_data`.`debit`, `tally_ledger_data`.`credit`, `tally_ledger_data`.`comment` FROM `tally_ledger_data` LEFT JOIN `tally_ledger` AS ledegr ON `ledegr`.`ledger_key` = `tally_ledger_data`.`ladger_key`  WHERE tally_ledger_data.ladger_key = :data  AND `which_module` = 'DE'",
                 {
                     replacements: { data: data },
                     type: tallyDB.QueryTypes.SELECT,
@@ -164,7 +166,7 @@ router.post("/debitVoucherList", [auth.isAuthorized], async (req, res) => {
                     module_used: main_stmt[i].module_used,
                     ref_date: moment(main_stmt[i].ref_date, "YYYY-MM-DD").format("DD-MM-YYYY"),
                     which_module: main_stmt[i].which_module,
-                    status: main_stmt[i].status,
+                    dnStatus: main_stmt[i].status,
                     account: main_stmt[i].account,
                     account_code: main_stmt[i].account_code,
                     debit: main_stmt[i].debit,
@@ -217,67 +219,89 @@ router.post("/debitVoucherDetail", [auth.isAuthorized], async (req, res) => {
 
 // PRINT DEBIT VOUCHER
 router.post("/printDebitVoucher", [auth.isAuthorized], async (req, res) => {
-    let validation = new Validator(req.body, {
-        dv_key: "required",
+  let validation = new Validator(req.body, {
+    dv_key: "required",
+  });
+  if (validation.fails()) {
+    res.json({ message: "some fields are missing in the form.", data: validation.errors.all(), status: "error", success: false });
+  }
+ 
+  try {
+    let stmt = await tallyDB.query("SELECT  `tally_ledger`.`ladger_name`,`tally_ledger`.`code`,debit,credit,ref_date,module_used FROM `tally_ledger_data` LEFT JOIN `tally_ledger` ON  `tally_ledger_data`.`ladger_key`=`tally_ledger`.`ledger_key` WHERE `module_used` = :data AND `which_module` = 'DE'", {
+      replacements: { data: req.body.dv_key },
+      type: tallyDB.QueryTypes.SELECT,
     });
-    if (validation.fails()) {
-        res.json({ message: "some fields are missing in the form.", data: validation.errors.all(), status: "error", success: false });
-    }
-
-    try {
-        let stmt = await tallyDB.query("SELECT  `tally_ledger`.`ladger_name`,`tally_ledger`.`code`,debit,credit,ref_date,module_used FROM `tally_ledger_data` LEFT JOIN `tally_ledger` ON  `tally_ledger_data`.`ladger_key`=`tally_ledger`.`ledger_key` WHERE `module_used` = :data AND `which_module` = 'DE'", {
-            replacements: { data: req.body.dv_key },
-            type: tallyDB.QueryTypes.SELECT,
-        });
-        if (stmt.length > 0) {
-            let data = {
-                dv_code: stmt[0].module_used,
-                ref_date: moment(stmt[0].ref_date, "YYYY-MM-DD").format("DD-MM-YYYY"),
-            };
-
-            let rows = "";
-            let row_total = "";
-            let total_debit = 0;
-            let total_credit = 0;
-            for (let i = 0; i < stmt.length; i++) {
-                rows += `
+    if (stmt.length > 0) {
+      let data = {
+        dv_code: stmt[0].module_used,
+        ref_date: moment(stmt[0].ref_date, "YYYY-MM-DD").format("DD-MM-YYYY"),
+      };
+ 
+ 
+      let grouped = {};
+      let groupOrder = [];
+ 
+      for (let i = 0; i < stmt.length; i++) {
+        let key = stmt[i].code;
+ 
+        if (!grouped[key]) {
+          grouped[key] = {
+            ladger_name: stmt[i].ladger_name,
+            debit: 0,
+            credit: 0,
+          };
+          groupOrder.push(key);
+        }
+ 
+        grouped[key].debit += Number(stmt[i].debit) || 0;
+        grouped[key].credit += Number(stmt[i].credit) || 0;
+      }
+ 
+      let rows = "";
+      let row_total = "";
+      let total_debit = 0;
+      let total_credit = 0;
+ 
+      for (let g of groupOrder) {
+        let row = grouped[g];
+        rows += `
           <tr style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">
-            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${stmt[i].ladger_name}</td>
-            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${stmt[i].debit}</td>
-            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${stmt[i].credit}</td>
+            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${row.ladger_name}</td>
+            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${row.debit.toFixed(2)}</td>
+            <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">${row.credit.toFixed(2)}</td>
           </tr>
           `;
-                total_debit += Number(stmt[i].debit);
-                total_credit += Number(stmt[i].credit);
-            }
-
-            row_total = `
+        total_debit += row.debit;
+        total_credit += row.credit;
+      }
+ 
+      row_total = `
             <tr style="border-left: 1px solid black; border-right: 1px solid black; border-top: 1px solid black" class="no-border">
               <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border"></td>
               <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">
-                <strong>${total_debit}</strong>
+                <strong>${total_debit.toFixed(2)}</strong>
               </td>
               <td style="border-left: 1px solid black; border-right: 1px solid black" class="no-border">
-                <strong>${total_credit}</strong>
+                <strong>${total_credit.toFixed(2)}</strong>
               </td>
             </tr>
         `;
-
-            let options = { format: "A4", margin: { top: "0px", bottom: "0px", left: "0px", right: "0px" } };
-            let file = { content: require("./printHtml/dvHtml").printHtml(data, rows, row_total) };
-
-            await htmlToPdf
-                .generatePdf(file, options)
-                .then((pdfBuffer) => {
-                    res.json({ buffer: pdfBuffer });
-                })
-                .catch((err) => {
-                    return res.json({ message: "an error while generating file", status: "error", success: false});
-                });
-        }
-    } catch (err) {
-        return helper.errorResponse(res, err);
+ 
+      let options = { format: "A4", margin: { top: "0px", bottom: "0px", left: "0px", right: "0px" } };
+      let file = { content: require("./printHtml/dvHtml").printHtml(data, rows, row_total) };
+ 
+      await htmlToPdf
+        .generatePdf(file, options)
+        .then((pdfBuffer) => {
+          res.json({ buffer: pdfBuffer });
+        })
+        .catch((err) => {
+          return res.json({ code: 500, message: "an error while generating file", status: "error", error: err.stack });
+        });
     }
+  } catch (err) {
+    res.json({ code: 500, status: "error", message: { msg: "Internal Error<br/>If this condition persists, contact your system administrator" }, err: err.stack });
+  }
 });
 
 // EDIT DEBIT VOUCHER
@@ -579,5 +603,879 @@ router.get("/register", [auth.isAuthorized], async (req, res) => {
         return helper.errorResponse(res, err);
     }
 });
+
+
+const storage1 = multer.diskStorage({
+  destination: "tmp",
+  filename: function (req, file, cb) {
+    cb(
+      null,
+      "DBT" +
+      Date.now() +
+      Math.floor(Math.random() * 900 + 100) +
+      path.extname(file.originalname),
+    );
+  },
+});
+ 
+const upload1 = multer({ storage: storage1 });
+ 
+const roundTo2 = (num) => Math.round((Number(num) || 0) * 100 + Number.EPSILON) / 100;
+ 
+ 
+router.post("/upload/item", upload1.single("file"), async (req, res) => {
+  try {
+    if (!req.file || !req.file.path) {
+      return res.json({
+        code: 400,
+        message:"No file uploaded. Please upload an Excel file.",
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    const filePath = req.file.path;
+    const cleanup = () => {
+      try { fs.unlinkSync(filePath); } catch (_) { }
+    };
+ 
+    const requiredColumns = [
+      "Date", "Part Code", "Vendor Code", "Voucher No.", "Voucher Ref. No.",
+      "GSTIN/UIN", "Narration", "Quantity", "UOM", "Rate", "Value", "TDS",
+      "GL_Name","DN_Status"
+    ];
+    const MAX_ROWS = 1000;
+    const MAX_NARRATION_LENGTH = 200;
+ 
+    const workbook = xlsx.readFile(filePath, { cellDates: true });
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      cleanup();
+      return res.json({
+        code: 400,
+        message:"Excel file is empty or invalid.",
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!worksheet || !worksheet["!ref"]) {
+      cleanup();
+      return res.json({
+        code: 400,
+        message:"Excel sheet is empty.",
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    const range = xlsx.utils.decode_range(worksheet["!ref"]);
+    const rawHeaders = [];
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cell = worksheet[xlsx.utils.encode_cell({ r: 0, c: col })];
+      rawHeaders.push(cell ? String(cell.v).trim() : "");
+    }
+ 
+    const missingHeaders = requiredColumns.filter(
+      (reqCol) => !rawHeaders.some((h) => h.toUpperCase() === reqCol.toUpperCase())
+    );
+ 
+    if (missingHeaders.length > 0) {
+      cleanup();
+      return res.json({
+        code: 400,
+        message:`Missing required columns: ${missingHeaders.join(", ")}`,
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    const colIndexMap = {};
+    rawHeaders.forEach((header, idx) => {
+      colIndexMap[header.toUpperCase()] = idx;
+    });
+ 
+    const allRows = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+    const data = allRows.slice(1);
+ 
+    if (data.length === 0) {
+      cleanup();
+      return res.status(400).json({
+        code: 400,
+        message:"Excel file contains no data rows.",
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    if (data.length > MAX_ROWS) {
+      cleanup();
+      return res.status(400).json({
+        code: 400,
+        message:`Excel file exceeds max limit of ${MAX_ROWS} rows.`,
+        status: "error",
+        success: false,
+      });
+    }
+ 
+    const normalizeAmount = (val) => {
+      if (val === null || val === undefined || val === "--") return 0;
+      if (typeof val === "string") {
+        const trimmed = val.trim().replace(/,/g, "");
+        if (trimmed === "" || trimmed === "--") return 0;
+        const num = Number(trimmed);
+        return isNaN(num) ? 0 : roundTo2(num);
+      }
+      const num = Number(val);
+      return isNaN(num) ? 0 : roundTo2(num);
+    };
+ 
+    const isBlank = (val) =>
+      val === null || val === undefined || String(val).trim() === "";
+
+    for (const row of data) {
+      while (row.length < rawHeaders.length) row.push(undefined);
+    }
+ 
+    const vendorCodes = [...new Set(data.map((r) => r[colIndexMap["VENDOR CODE"]]).filter(Boolean))];
+    const partCodesList = [...new Set(data.map((r) => r[colIndexMap["PART CODE"]]).filter(Boolean))];
+    const glCodes = [...new Set(data.map((r) => r[colIndexMap["GL_NAME"]]).filter(Boolean))];
+    const tdsCodes = [...new Set(data.map((r) => r[colIndexMap["TDS"]]).filter(Boolean))];
+ 
+    let vendorMap = new Map();
+    if (vendorCodes.length > 0) {
+      const vendorRows = await tallyDB.query(
+        `SELECT code, ladger_name, ledger_key FROM tally_ledger WHERE code IN (:vendorCodes)`,
+        {
+          replacements: { vendorCodes },
+          type: tallyDB.QueryTypes.SELECT,
+        }
+      );
+      vendorMap = new Map(vendorRows.map((v) => [v.code, v]));
+    }
+ 
+    let partMap = new Map();
+    if (partCodesList.length > 0) {
+      const [partRows] = await invtDB.query(
+        `SELECT c_part_no, c_name, component_key FROM components WHERE c_part_no IN (:partCodes)`,
+        { replacements: { partCodes: partCodesList } }
+      );
+      partMap = new Map(partRows.map((p) => [p.c_part_no, p]));
+    }
+ 
+    let glNameMap = {};
+    if (glCodes.length > 0) {
+      const glRows = await tallyDB.query(
+        `SELECT ledger_key, ladger_name, code FROM tally_ledger WHERE ledger_key IN (:codes) OR code IN (:codes)`,
+        {
+          replacements: { codes: glCodes },
+          type: tallyDB.QueryTypes.SELECT,
+        }
+      );
+      glNameMap = glRows.reduce((acc, r) => {
+        const itemObj = { key: r.ledger_key, name: r.ladger_name, code: r.code };
+        if (r.code) acc[r.code] = itemObj;
+        if (r.ledger_key) acc[r.ledger_key] = itemObj;
+        return acc;
+      }, {});
+    }
+ 
+    let tdsMap = {};
+    if (tdsCodes.length > 0) {
+      const tdsRows = await tallyDB.query(
+        `SELECT tally_tds.tds_key, tally_tds.tds_code, tally_tds.tds_name,
+                tally_tds.tds_percent AS tds_amount, tally_tds.tds_gl_code AS gl_key, 
+                tally_ledger.code AS gl_code, tally_ledger.ladger_name
+         FROM tally_tds
+         LEFT JOIN tally_ledger ON tally_tds.tds_gl_code = tally_ledger.ledger_key
+         WHERE tally_tds.tds_code IN (:codes)`,
+        {
+          replacements: { codes: tdsCodes },
+          type: tallyDB.QueryTypes.SELECT,
+        }
+      );
+      tdsMap = tdsRows.reduce((acc, r) => {
+        acc[r.tds_code] = {
+          tds_key: r.tds_key,
+          tds_code: r.tds_code,
+          name: r.tds_name,
+          tds_percent: Number(r.tds_amount || 0),
+          gl_code: r.ladger_name,
+          gl_key: r.gl_key,
+        };
+        return acc;
+      }, {});
+    }
+ 
+    const debitNotesGroupMap = new Map();
+ 
+    for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+      const row = data[rowIndex];
+      const rowNumber = rowIndex + 2;
+ 
+      const dateVal = row[colIndexMap["DATE"]];
+      const partCode = row[colIndexMap["PART CODE"]];
+      const vendorCode = row[colIndexMap["VENDOR CODE"]];
+      const voucherNo = row[colIndexMap["VOUCHER NO."]];
+      const gstin = row[colIndexMap["GSTIN/UIN"]];
+      const narration = row[colIndexMap["NARRATION"]];
+      const glCodeKey = row[colIndexMap["GL_NAME"]];
+      const rawQuantity = row[colIndexMap["QUANTITY"]];
+      const rawRate = row[colIndexMap["RATE"]];
+      const dnStatus = row[colIndexMap["DN_STATUS"]];
+
+      const dnStatusArr = ["A","C"];
+
+      if (!dnStatusArr.includes(dnStatus.toUpperCase())) {
+        cleanup();
+        return res.json({ message: `Validation Failed: Invalid or missing DN_STATUS "${dnStatus}" at row [${rowNumber}]`, status: "error", success: false });
+      }
+ 
+      // Validation logic
+      if (isBlank(dateVal)) {
+        cleanup();
+        return res.json({ message:`Validation Failed: Date is required at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (isBlank(voucherNo)) {
+        cleanup();
+        return res.json({  message: `Validation Failed: Voucher No. is required at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (isBlank(vendorCode) || !vendorMap.has(vendorCode)) {
+        cleanup();
+        return res.json({ message: `Validation Failed: Invalid or missing Vendor Code "${vendorCode}" at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (isBlank(partCode) || !partMap.has(partCode)) {
+        cleanup();
+        return res.json({  message: `Validation Failed: Invalid or missing Part Code "${partCode}" at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (isBlank(gstin)) {
+        cleanup();
+        return res.json({ message: `Validation Failed: GSTIN/UIN is required at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (isBlank(glCodeKey) || !glNameMap[glCodeKey]) {
+        cleanup();
+        return res.json({ message: `Validation Failed: Invalid or missing GL_NAME at row [${rowNumber}]`, status: "error", success: false });
+      }
+      if (!isBlank(narration) && String(narration).length > MAX_NARRATION_LENGTH) {
+        cleanup();
+        return res.json({ message: `Validation Failed: Narration exceeds ${MAX_NARRATION_LENGTH} characters at row [${rowNumber}]`, status: "error", success: false });
+      }
+
+      if(isBlank(dnStatus)){
+        cleanup();
+        return res.json({ message: `Validation Failed: DN_STATUS is required at row [${rowNumber}]`, status: "error", success: false });
+      }
+ 
+      const quantity = normalizeAmount(rawQuantity);
+      if (quantity <= 0) {
+        cleanup();
+        return res.json({ message: `Validation Failed: Quantity is required and must be > 0 at row [${rowNumber}]`, status: "error", success: false });
+      }
+ 
+      const rate = normalizeAmount(rawRate);
+      if (rate <= 0) {
+        cleanup();
+        return res.status(400).json({ message: `Validation Failed: Rate is required and must be > 0 at row [${rowNumber}]`, status: "error", success: false });
+      }
+
+ 
+      const value = normalizeAmount(row[colIndexMap["VALUE"]]);
+      const igst = normalizeAmount(row[colIndexMap["IGST_INPUT_REVERSAL"]]);
+      const sgst = normalizeAmount(row[colIndexMap["SGST_INPUT_REVERSAL"]]);
+      const cgst = normalizeAmount(row[colIndexMap["CGST_INPUT_REVERSAL"]]);
+ 
+      // ── Single signed Round_off column ──
+      // Negative value => debit, Positive value => credit
+      const roundOffRaw = normalizeAmount(row[colIndexMap["ROUND_OFF"]]);
+      const roundOffDebit = roundOffRaw < 0 ? Math.abs(roundOffRaw) : 0;
+      const roundOffCredit = roundOffRaw > 0 ? roundOffRaw : 0;
+ 
+      const vendorInfo = vendorMap.get(vendorCode);
+      const partInfo = partMap.get(partCode);
+      const glInfo = glNameMap[glCodeKey] || null;
+ 
+      // TDS Calculation (Treating 2 as 2%, 0.1 as 0.1%)
+      const tdsCode = row[colIndexMap["TDS"]];
+      const rowTdsDetails = [];
+      let itemTdsAmount = 0;
+      let tdsPercent = 0;
+ 
+      if (tdsCode && tdsMap[tdsCode]) {
+        const masterTds = tdsMap[tdsCode];
+        tdsPercent = masterTds.tds_percent || 0;
+        itemTdsAmount = roundTo2((value * tdsPercent) / 100);
+        // itemTdsAmount = Math.ceil((value * tdsPercent) / 100);
+ 
+        rowTdsDetails.push({
+          tdsCode: masterTds.tds_code,
+          tdsPercent: tdsPercent,
+          tdsAmount: itemTdsAmount,
+          masterDetails: {
+            tds_key: masterTds.tds_key,
+            tds_code: masterTds.tds_code,
+            name: masterTds.name,
+            gl_code: masterTds.gl_code,
+            gl_key: masterTds.gl_key,
+          },
+        });
+      }
+ 
+      const itemObj = {
+        partCode,
+        partName: partInfo.c_name,
+        componentKey: partInfo.component_key,
+        narration,
+        quantity,
+        uom: row[colIndexMap["UOM"]],
+        rate,
+        value,
+        glDetails: glInfo,
+        tdsDetails: rowTdsDetails,
+        tdsAmount: itemTdsAmount,
+      };
+ 
+      // Grouping Key based on Voucher No + Vendor Code
+      const groupKey = `${voucherNo.trim().toUpperCase()}_${vendorCode.trim().toUpperCase()}`;
+ 
+      if (!debitNotesGroupMap.has(groupKey)) {
+        debitNotesGroupMap.set(groupKey, {
+          voucherNo,
+          date: dateVal,
+          vendorCode: vendorInfo.ledger_key,
+          venName: vendorInfo.ladger_name,
+          venRegisterId: vendorCode,
+          voucherRefNo: row[colIndexMap["VOUCHER REF. NO."]],
+          gstin,
+          items: [itemObj],
+          taxes: {
+            igstInputReversal: igst,
+            sgstInputReversal: sgst,
+            cgstInputReversal: cgst,
+          },
+          roundOff: roundOffRaw,
+          taxableValue: value,
+          totalTdsAmount: itemTdsAmount,
+          totalValue: roundTo2(value + igst + sgst + cgst - itemTdsAmount + roundOffCredit - roundOffDebit),
+          dnStatus: dnStatus == "A" ? "ACTIVE" : "CANCELLED",
+        });
+      } else {
+        const existingGroup = debitNotesGroupMap.get(groupKey);
+        existingGroup.items.push(itemObj);
+
+        existingGroup.taxableValue = roundTo2(existingGroup.taxableValue + value);
+        existingGroup.totalTdsAmount = roundTo2(existingGroup.totalTdsAmount + itemTdsAmount);
+        existingGroup.taxes.igstInputReversal = roundTo2(existingGroup.taxes.igstInputReversal + igst);
+        existingGroup.taxes.sgstInputReversal = roundTo2(existingGroup.taxes.sgstInputReversal + sgst);
+        existingGroup.taxes.cgstInputReversal = roundTo2(existingGroup.taxes.cgstInputReversal + cgst);
+        existingGroup.roundOff = roundTo2(existingGroup.roundOff + roundOffRaw);
+        const currentItemTotal = value + igst + sgst + cgst - itemTdsAmount + roundOffCredit - roundOffDebit;
+        existingGroup.totalValue = roundTo2(existingGroup.totalValue + currentItemTotal);
+      }
+    }
+ 
+    cleanup();
+ 
+    const debitNotes = Array.from(debitNotesGroupMap.values());
+ 
+    return res.json({
+      code: 200,
+      success:true,
+      data: { debitNotes },
+      message: "Excel file processed successfully.",
+      status: "success",
+    });
+ 
+  } catch (error) {
+    console.log(error);
+    if (req.file && req.file.path) {
+      try { fs.unlinkSync(req.file.path); } catch (_) { }
+    }
+    return res.json({
+      code: 500,
+      message: "Internal Error! If this persists, contact your system administrator.",
+      error: error.message,
+      status: "error",
+      success: false,
+    });
+  }
+});
+ 
+ 
+router.post("/create-bulk-debit-note", [auth.isAuthorized], async (req, res) => {
+  let validation = new Validator(req.body, {
+    debitNotes: "required|array|min:1",
+    "debitNotes.*.vendorCode": "required",
+    "debitNotes.*.gstin": "required",
+    "debitNotes.*.date": "required",
+    "debitNotes.*.items": "required|array|min:1",
+    "debitNotes.*.items.*.partCode": "required",
+    "debitNotes.*.items.*.quantity": "required|numeric",
+    "debitNotes.*.items.*.rate": "required|numeric",
+    "debitNotes.*.items.*.value": "required|numeric",
+    "debitNotes.*.items.*.glDetails.key": "required",
+    "debitNotes.*.dnStatus": "required",
+  });
+ 
+  if (validation.fails()) {
+    return res.json({
+      code: 500,
+      status: "error",
+      message: validation.errors.all(),
+    });
+  }
+ 
+  const FIXED_LEDGERS = {
+    cgst: "TP833329493527",
+    sgst: "TP169441804733",
+    igst: "TP145525070328",
+    roundOff: "TP558350023869",
+  };
+ 
+  const insert_by = req.logedINUser;
+  // const insert_by = "CRN8527467";
+  const insert_date = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+ 
+  const transaction = await tallyDB.transaction();
+ 
+  try {
+    const debitNotesInput = req.body.debitNotes;
+    const createdNotes = [];
+ 
+    // Helper: Get next debit voucher number
+    const getNextDebitNo = async () => {
+      const stmt_number = await tallyDB.query(
+        "SELECT * FROM `tally_numbering` WHERE `for_number` = 'DEBIT' FOR UPDATE",
+        { type: tallyDB.QueryTypes.SELECT, transaction }
+      );
+ 
+      let debit_no;
+ 
+      if (stmt_number.length > 0) {
+        let suffix = parseInt(stmt_number[0].suffix) + 1;
+        suffix = suffix.toString().padStart(parseInt(stmt_number[0].number_length_limit), "0");
+        debit_no = `${stmt_number[0].prefix}/${stmt_number[0].session}/${suffix}`;
+ 
+        await tallyDB.query(
+          "UPDATE `tally_numbering` SET `suffix` = `suffix`+1 WHERE `for_number` = 'DEBIT'",
+          { type: tallyDB.QueryTypes.UPDATE, transaction }
+        );
+      } else {
+        const currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
+        const session = `${currYear}-${currYear + 1}`;
+        debit_no = `DN/${session}/0001`;
+ 
+        await tallyDB.query(
+          "INSERT INTO `tally_numbering` (`for_number`, `prefix`, `session`, `suffix`, `number_length_limit`) VALUES ('DEBIT', 'DN', :session, '0001', 4)",
+          { replacements: { session }, type: tallyDB.QueryTypes.INSERT, transaction }
+        );
+      }
+ 
+      return debit_no;
+    };
+ 
+    // Helper: Insert line item into tally_ledger_data (gstin added)
+    const insertLedgerLine = async ({
+      txnType,
+      ladger_key,
+      debit = 0,
+      credit = 0,
+      module_used = "--",
+      debit_key,
+      effective_date,
+      comment = "--",
+      dnStatus = "ACTIVE",
+    }) => {
+      await tallyDB.query(
+        `INSERT INTO \`tally_ledger_data\` (
+          txn_type,ladger_key, debit, credit, module_used, debit_key, insert_date, 
+          which_module, ledger_data_status, ref_date, insert_by,comment,DN_Status
+        ) VALUES (
+          :txnType,:ladger_key, :debit, :credit, :module_used, :debit_key, :insert_date, 
+          :which_module, :ledger_data_status, :effective_date, :insert_by,:comment,:dnStatus
+        )`,
+        {
+          replacements: {
+            txnType,
+            ladger_key,
+            debit,
+            credit,
+            module_used,
+            debit_key,
+            insert_date,
+            which_module: "DE",
+            ledger_data_status: "--",
+            effective_date,
+            insert_by,
+            comment,
+            dnStatus
+          },
+          type: tallyDB.QueryTypes.INSERT,
+          transaction,
+        }
+      );
+    };
+ 
+    // Loop through each Debit Note in the array
+    for (let n = 0; n < debitNotesInput.length; n++) {
+      const note = debitNotesInput[n];
+
+      // ── Normalize dnStatus to DB ENUM ('ACTIVE' | 'CANCELLED') ──
+      const rawStatus = String(note.dnStatus || note.DN_Status || "").trim().toUpperCase();
+      const dnStatus = (rawStatus === "CANCEL" || rawStatus === "CANCELLED" || rawStatus === "CANCELED")
+        ? "CANCELLED"
+        : "ACTIVE";
+ 
+      if (!note.items || note.items.length === 0) {
+        await transaction.rollback();
+        return res.json({
+          code: 500,
+          status: "error",
+          message: `Debit note at index [${n}] (voucher "${note.voucherNo || "-"}") has no items.`,
+        });
+      }
+ 
+      const noteGstin = note.gstin || "--";
+      const taxes = note.taxes || {};
+      const igst = Number(taxes.igstInputReversal || 0);
+      const sgst = Number(taxes.sgstInputReversal || 0);
+      const cgst = Number(taxes.cgstInputReversal || 0);
+ 
+      // ── Single signed Round_off value ──
+      // Negative => debit, Positive => credit
+      const roundOffValue = Number(note.roundOff || 0);
+      const roundOffDebit = roundOffValue < 0 ? Math.abs(roundOffValue) : 0;
+      const roundOffCredit = roundOffValue > 0 ? roundOffValue : 0;
+ 
+      const taxableValue = Number(note.taxableValue || 0);
+      const totalTdsAmount = Number(note.totalTdsAmount || 0);
+      const totalValue = Number(note.totalValue || 0);
+ 
+      // Debit / Credit Balance check
+      const calculated_debit = totalValue + roundOffDebit + totalTdsAmount;
+      // Credits: Item Values + Tax Reversals + Round-Off Credit
+      const calculated_credit = taxableValue + igst + cgst + sgst + roundOffCredit;
+ 
+ 
+      if (Math.abs(Number(calculated_debit.toFixed(2)) - Number(calculated_credit.toFixed(2))) > 1) {
+        await transaction.rollback();
+        return res.json({
+          code: 500,
+          status: "error",
+          message: `Debit(${calculated_debit.toFixed(2)}) And Credit Value(${calculated_credit.toFixed(2)}) Not Matched for voucher "${note.voucherNo || "-"}" (index [${n}])!!!`,
+        });
+      }
+ 
+      const invoiceMoment = moment(note.date, "DD-MM-YYYY", true);
+ 
+      if (!invoiceMoment.isValid()) {
+        await transaction.rollback();
+ 
+        return res.json({
+          code: 400,
+          status: "error",
+          message: `Invalid date "${note.date}" for voucher "${note.voucherNo || "-"}" (index [${n}]). Expected format: DD-MM-YYYY`,
+        });
+      }
+ 
+      const effective_date = invoiceMoment.format("YYYY-MM-DD");
+ 
+      const debit_no = await getNextDebitNo();
+      const vbt_debit_key = debit_no;
+      let txnType = "--";
+ 
+      // ── 1. Insert Item Entries ──
+      for (let i = 0; i < note.items.length; i++) {
+        const item = note.items[i];
+ 
+        const componentData = await invtDB.query(
+          `SELECT c_type FROM components WHERE component_key = :partCode LIMIT 1`,
+          {
+            replacements: {
+              partCode: item.partCode,
+            },
+            type: invtDB.QueryTypes.SELECT,
+          }
+        );
+ 
+        if (componentData.length === 0) {
+          await transaction.rollback();
+ 
+          return res.json({
+            code: 500,
+            status: "error",
+            message: `Component ${item.partCode} not found in components master`,
+          });
+        }
+ 
+        txnType =
+          componentData[0].c_type === "R"
+            ? "RAW"
+            : componentData[0].c_type === "S"
+              ? "SER"
+              : "--";
+        const itemTds = (item.tdsDetails && item.tdsDetails[0]) || null;
+        const itemTdsAmount = Number(item.tdsAmount || (itemTds ? itemTds.tdsAmount : 0) || 0);
+        // const vbt_key = item.componentKey || `${debit_no}-${i + 1}`;
+ 
+        if (Number(item.value || 0) > 0) {
+          if (!item.glDetails || !item.glDetails.key || item.glDetails.key === "--") {
+            await transaction.rollback();
+            return res.json({
+              code: 500,
+              success: false,
+              status: "error",
+              message:`Something wrong!!! (GL OPTION) — part "${item.partCode}" in voucher "${note.voucherNo || "-"}"`
+            });
+          }
+ 
+          await insertLedgerLine({
+            txnType: txnType,
+            ladger_key: item.glDetails.key,
+            debit: 0,
+            credit: item.value || 0,
+            module_used: vbt_debit_key,
+            debit_key: "--",
+            effective_date,
+            insert_date,
+            which_module: "DE",
+            insert_by,
+            comment: item.narration || note.narration || "--",
+            dnStatus
+          });
+        }
+ 
+        // TDS Entry
+        if (itemTdsAmount > 0) {
+          if (!itemTds || !itemTds.masterDetails || !itemTds.masterDetails.gl_key) {
+            await transaction.rollback();
+            return res.json({
+              code: 500,
+              status: "error",
+              message: { msg: `Something wrong!!! (TDS OPTION) — part "${item.partCode}" in voucher "${note.voucherNo || "-"}"` },
+            });
+          }
+ 
+          console.log(itemTds.masterDetails.gl_key, "========= details =====");
+          await insertLedgerLine({
+            txnType: txnType,
+            ladger_key: itemTds.masterDetails.gl_key,
+            debit: itemTdsAmount,
+            credit: 0,
+            module_used: vbt_debit_key,
+            debit_key: "--",
+            effective_date,
+            insert_date,
+            which_module: "DE",
+            insert_by,
+            dnStatus
+          });
+        }
+      }
+ 
+      // ── 2. Tax / Round-Off Entries ──
+      if (cgst > 0) {
+        await insertLedgerLine({
+          txnType: txnType,
+          ladger_key: FIXED_LEDGERS.cgst,
+          debit: 0,
+          credit: cgst,
+          module_used: vbt_debit_key,
+          debit_key: "--",
+          effective_date,
+          insert_date,
+          which_module: "DE",
+          insert_by,
+          dnStatus
+        });
+      }
+ 
+      if (sgst > 0) {
+        await insertLedgerLine({
+          txnType: txnType,
+          ladger_key: FIXED_LEDGERS.sgst,
+          debit: 0,
+          credit: sgst,
+          module_used: vbt_debit_key,
+          debit_key: "--",
+          effective_date,
+          insert_date,
+          which_module: "DE",
+          insert_by,
+          dnStatus
+        });
+      }
+ 
+      if (igst > 0) {
+        await insertLedgerLine({
+          txnType: txnType,
+          ladger_key: FIXED_LEDGERS.igst,
+          debit: 0,
+          credit: igst,
+          module_used: vbt_debit_key,
+          debit_key: "--",
+          effective_date,
+          insert_date,
+          which_module: "DE",
+          insert_by,
+          dnStatus
+        });
+      }
+ 
+      // ── Round-Off (single signed value) ──
+      // roundOff > 0 -> credit, roundOff < 0 -> debit
+      if (roundOffValue !== 0) {
+        await insertLedgerLine({
+          txnType: txnType,
+          ladger_key: FIXED_LEDGERS.roundOff,
+          debit: roundOffDebit,
+          credit: roundOffCredit,
+          module_used: vbt_debit_key,
+          debit_key: "--",
+          effective_date,
+          which_module: "DE",
+          insert_by,
+          dnStatus
+        });
+      }
+ 
+      // ── 3. Vendor Entry ──
+      await insertLedgerLine({
+        txnType: txnType,
+        ladger_key: note.vendorCode,
+        debit: totalValue,
+        credit: 0,
+        module_used: vbt_debit_key,
+        debit_key: "--",
+        effective_date,
+        insert_date,
+        which_module: "DE",
+        insert_by,
+        dnStatus
+      });
+ 
+      createdNotes.push({
+        debitNo: debit_no,
+        originalVoucherNo: note.voucherNo || null,
+        vendorCode: note.vendorCode,
+        totalValue,
+        totalTdsAmount,
+      });
+    }
+ 
+    await transaction.commit();
+ 
+    return res.json({
+      code: 200,
+      success:true,
+      status: "success",
+      message: "Insertion Successful",
+      data: { debitNotes: createdNotes },
+    });
+  } catch (error) {
+    console.log(error);
+    await transaction.rollback();
+    return res.json({
+      code: 500,
+      status: "error",
+      message:"Internal Error<br/>If this condition persists, contact your system administrator",
+      err: error.stack,
+    });
+  }
+});
+
+
+
+router.post("/cancel-debit-note", [auth.isAuthorized], async (req, res) => {
+  const { debitNo, cancelReason } = req.body;
+
+  let validation = new Validator(req.body, {
+    debitNo: "required",
+    cancelReason: "required",
+  });
+  if (validation.fails()) {
+    return res.json({success: false, code: 500, status: "error", message: validation.errors.all() });
+  }
+
+  const insert_by = req.logedINUser;
+  const update_date = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+
+  let transaction;
+  try {
+    transaction = await tallyDB.transaction();
+
+    // 1. Check if the debit note exists
+    const existingEntries = await tallyDB.query(
+      `SELECT module_used, DN_Status
+       FROM tally_ledger_data
+       WHERE module_used = :debitNo AND which_module = 'DE'
+       FOR UPDATE`,
+      {
+        replacements: { debitNo },
+        type: tallyDB.QueryTypes.SELECT,
+        transaction,
+      }
+    );
+
+    if (existingEntries.length === 0) {
+      await transaction.rollback();
+      return res.json({
+        code: 404,
+        success: false,
+        status: "error",
+        message:`Debit Note "${debitNo}" not found.`,
+      });
+    }
+
+    // 2. Prevent redundant cancellation
+    const isAlreadyCancelled = existingEntries.every(
+      (row) => row.DN_Status === "CANCELLED"
+    );
+
+    if (isAlreadyCancelled) {
+      await transaction.rollback();
+      return res.json({
+        code: 400,
+        success: false,
+        status: "error",
+        message: `Debit Note "${debitNo}" is already cancelled.`,
+      });
+    }
+
+    // 3. Zero out debit/credit and set status to CANCELLED
+    await tallyDB.query(
+      `UPDATE tally_ledger_data
+       SET DN_Status = 'CANCELLED',
+           cancel_reason = :cancelReason,
+           update_date = :update_date,
+           update_by = :insert_by
+       WHERE module_used = :debitNo AND which_module = 'DE'`,
+      {
+        replacements: { debitNo, cancelReason, update_date, insert_by },
+        type: tallyDB.QueryTypes.UPDATE,
+        transaction,
+      }
+    );
+
+    await transaction.commit();
+
+    return res.json({
+      code: 200,
+      success: true,
+      status: "success",
+      message: `Debit Note "${debitNo}" has been successfully cancelled.`,
+    });
+  } catch (error) {
+    console.error("Error cancelling debit note:", error);
+    if (transaction) await transaction.rollback();
+    return res.json({
+      code: 500,
+      success: false,
+      status: "error",
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
+      err: error.stack,
+    });
+  }
+});
+
 
 module.exports = router;
