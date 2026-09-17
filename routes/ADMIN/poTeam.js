@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const auth = require("../../middleware/auth");
-let { otherDB } = require("../../config/db/connection");
+let { otherDB, invtDB } = require("../../config/db/connection");
 const helper = require("../../helper/helper");
 
 const Validator = require("validatorjs");
@@ -47,6 +47,25 @@ const Validator = require("validatorjs");
 //     return helper.errorResponse(res, err);
 //   }
 // });
+
+
+router.get("/fetch_all_cc", [auth.isAuthorized],  async (req, res) => {
+  try {
+    let stmt = await invtDB.query("SELECT cost_center_name AS cc_name, cost_center_key AS cc_key FROM cost_center WHERE cost_center_status ='Y'", {
+      type: invtDB.QueryTypes.SELECT,
+    })
+
+    if(stmt.length > 0){
+      return res.json({ status: "success", success: true, data: stmt });
+    } else {
+      return res.json({ status: "error", success: false, message: "No cost center found" });
+    }
+  } catch (error) {
+    console.log(error);
+    return res.json({ status: "error", success: false, message: "an error occured while fetching cost center" });
+  }
+})
+
 
 router.post("/add_team_in_po",  async (req, res) => {
   try {
