@@ -2303,7 +2303,7 @@ router.patch("/updatePassword", async (req, res) => {
 
 
 
-router.post("/get-email-otp",  async (req, res) => {
+router.post("/get-email-otp", [auth.isAuthorized],  async (req, res) => {
   const validation = new Validator(req.body, {
     email: "required|email",
   });
