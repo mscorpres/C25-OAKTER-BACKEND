@@ -51,12 +51,20 @@ const Validator = require("validatorjs");
 
 router.get("/fetch_all_cc", [auth.isAuthorized],  async (req, res) => {
   try {
-    let stmt = await invtDB.query("SELECT cost_center_name AS cc_name, cost_center_key AS cc_key FROM cost_center WHERE cost_center_status ='Y'", {
+    let stmt = await invtDB.query("SELECT cost_center_name, cost_center_short_name AS cc_short_name, cost_center_key AS cc_key FROM cost_center WHERE cost_center_status ='Y'", {
       type: invtDB.QueryTypes.SELECT,
     })
 
+    let result =[]
+    stmt.map((item) => {
+      result.push({
+        cc_key: item.cc_key,
+        cc_name: item.cost_center_name + " (" + item.cc_short_name + ")",
+      });
+    })
+
     if(stmt.length > 0){
-      return res.json({ status: "success", success: true, data: stmt });
+      return res.json({ status: "success", success: true, data: result });
     } else {
       return res.json({ status: "error", success: false, message: "No cost center found" });
     }
