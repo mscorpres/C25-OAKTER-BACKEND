@@ -190,13 +190,11 @@ router.get("/fetch_po_team_memeber",[auth.isAuthorized],  async (req, res) => {
       }
     );
  
-    if (stmt.length === 0) {
+    if (stmt.length == 0) {
       return res.json({
-        code: 500,
+        success: false,
         status: "error",
-        message: {
-          msg: "No Team found!!!",
-        },
+        message: "No Team found!!!"
       });
     }
  
@@ -241,6 +239,7 @@ router.get("/fetch_po_team_memeber",[auth.isAuthorized],  async (req, res) => {
  
     return res.json({
       code: 200,
+      success:true,
       status: "success",
       data: result,
     });
@@ -252,9 +251,7 @@ router.get("/fetch_po_team_memeber",[auth.isAuthorized],  async (req, res) => {
     return res.json({
       code: 500,
       status: "error",
-      message: {
-        msg: "Internal Error!!",
-      },
+      message:"an error is occured while fetching team members",
     });
   }
 });
