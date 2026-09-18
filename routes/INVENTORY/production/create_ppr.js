@@ -310,7 +310,12 @@ router.post(
         });
       }
     } catch (err) {
-      return helper.errorResponse(res, err);
+      return res.json({
+        status: "error",
+        success: false,
+        message: "Internal Error!!! If this condition persists, contact your system administrator",
+        stack: err.stack,
+      });
     }
   }
 );

@@ -322,13 +322,15 @@ router.post("/location_allotted", auth.isAuthorized, async (req, res) => {
 
       if (insert_stmt.length > 0) {
         return res.json({
-          status: "success",
+          code: 200,
+          // status: "success",
           success: true,
           message: "Added Success...",
         });
       } else {
         return res.json({
-          status: "error",
+          // status: "error",
+          code: 500,
           success: false,
           message: "Something went wrong",
         });
