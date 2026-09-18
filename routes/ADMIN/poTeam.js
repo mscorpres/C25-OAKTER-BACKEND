@@ -183,8 +183,7 @@ router.get("/fetch_po_team_memeber",[auth.isAuthorized],  async (req, res) => {
        LEFT JOIN ${global.ims_db_name}.admin_login member
          ON member.CustID = ims_po_team.ims_po_team_member
        LEFT JOIN ${global.ims_db_name}.cost_center cost
-         ON cost.cost_center_key = ims_po_team.po_cost_center
-       WHERE ims_po_team.status_map_po_cc = 'APPROVED'`,
+         ON cost.cost_center_key = ims_po_team.po_cost_center`,
       {
         type: otherDB.QueryTypes.SELECT,
       }
