@@ -166,19 +166,92 @@ router.post("/fetch_po_team_member", [auth.isAuthorized], async (req, res) => {
 });
 
 // FETCH MEMEBER LIST
-router.get("/fetch_po_team_memeber", [auth.isAuthorized], async (req, res) => {
+router.get("/fetch_po_team_memeber",[auth.isAuthorized],  async (req, res) => {
   try {
-    let stmt = await otherDB.query(`SELECT leader.user_name AS leader_name , member.user_name AS member_name, leader.CustID AS leader_id, member.CustID AS member_id , cost.cost_center_key AS cost_center , cost.cost_center_name , cost.cost_center_short_name FROM ims_po_team LEFT JOIN ${global.ims_db_name}.admin_login leader ON leader.CustID = ims_po_team.ims_po_team_leader LEFT JOIN ${global.ims_db_name}.admin_login member ON member.CustID = ims_po_team.ims_po_team_member LEFT JOIN ${global.ims_db_name}.cost_center cost ON cost.cost_center_key = ims_po_team.po_cost_center `, {
-      type: otherDB.QueryTypes.SELECT,
-    });
-
-    if (stmt.length > 0) {
-      return res.json({ success: true, status: "success", data: stmt });
-    } else {
-      return res.json({ success: false, status: "error", message: "No Team found!!!" });
+    const stmt = await otherDB.query(
+      `SELECT
+          leader.user_name AS leader_name,
+          member.user_name AS member_name,
+          leader.CustID AS leader_id,
+          member.CustID AS member_id,
+          cost.cost_center_key AS cost_center,
+          cost.cost_center_name,
+          cost.cost_center_short_name
+       FROM ims_po_team
+       LEFT JOIN ${global.ims_db_name}.admin_login leader
+         ON leader.CustID = ims_po_team.ims_po_team_leader
+       LEFT JOIN ${global.ims_db_name}.admin_login member
+         ON member.CustID = ims_po_team.ims_po_team_member
+       LEFT JOIN ${global.ims_db_name}.cost_center cost
+         ON cost.cost_center_key = ims_po_team.po_cost_center`,
+      {
+        type: otherDB.QueryTypes.SELECT,
+      }
+    );
+ 
+    if (stmt.length == 0) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "No Team found!!!"
+      });
     }
+ 
+    const groupedData = {};
+ 
+    stmt.forEach((row) => {
+      const leaderId = row.leader_id;
+      const memberId = row.member_id;
+ 
+      // Create Leader
+      if (!groupedData[leaderId]) {
+        groupedData[leaderId] = {
+          leaderName: row.leader_name,
+          leaderId: leaderId,
+          members: {},
+        };
+      }
+ 
+      // Create Member under Leader
+      if (!groupedData[leaderId].members[memberId]) {
+        groupedData[leaderId].members[memberId] = {
+          member_name: row.member_name,
+          member_id: memberId,
+          costcenters: [],
+        };
+      }
+ 
+      // Add Cost Center to Member
+      groupedData[leaderId].members[memberId].costcenters.push({
+        cost_center: row.cost_center,
+        cost_center_name: row.cost_center_name,
+        cost_center_short_name: row.cost_center_short_name,
+      });
+    });
+ 
+    // Convert members object into array
+    const result = Object.values(groupedData).map((leader) => ({
+      leaderName: leader.leaderName,
+      leaderId: leader.leaderId,
+      members: Object.values(leader.members),
+    }));
+ 
+    return res.json({
+      code: 200,
+      success:true,
+      status: "success",
+      data: result,
+    });
+ 
   } catch (err) {
-    return helper.errorResponse(res, err);
+    console.error(err);
+    // helper.errorMAil(err);
+ 
+    return res.json({
+      code: 500,
+      status: "error",
+      message:"an error is occured while fetching team members",
+    });
   }
 });
 
