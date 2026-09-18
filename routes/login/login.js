@@ -1124,7 +1124,8 @@ router.post("/register", [auth.isAuthorized], async (req, res) => {
             );
             t.commit();
             return res.json({
-              status: "success",
+              // status: "success",
+              code:200,
               success: true,
               message:
                 "user registration completed..\nalloting UserID: " +
