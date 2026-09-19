@@ -8,10 +8,19 @@ let { invtDB } = require("../../../config/db/connection");
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 const Validator = require("validatorjs");
+const { calculateFGRate } = require("../../../helper/utils/newAvgRate");
 
 // FETCH ALL PENDING FG
 router.get("/pending", [auth.isAuthorized], async (req, res) => {
   try {
+    if (req.query.calculate === "war") {
+      if (!req.query.mfg || !req.query.qty) {
+        return res.json({ status: "error", success: false, message: "Something is missing in form field to supply" });
+      }
+      const war = await calculateFGRate(req.query.mfg, req.query.qty);
+      return res.json({ status: "success", success: true, data: { war } });
+    }
+
     let stmt0 = await invtDB.query(
       "SELECT `mfg_production_2`.`mfg_sku`, `mfg_production_2`.`mfg_ref_id`, `mfg_production_2`.`mfg_transaction`, `mfg_production_2`.`mfg_prod_type`, `mfg_production_2`.mfg_prod_planing_qty, `products`.`p_sku`, `products`.`p_name`, COALESCE( SUM( `mfg_production_2`.`mfg_prod_planing_qty` ), 0 ) AS totalReqQty, IF( table1.testAMT IS NULL, '0', table1.testAMT ) AS testAMT, `mfg_production_2`.`mfg_full_date` FROM `mfg_production_2` LEFT JOIN( SELECT `mfg_ref_id`, `mfg_transaction`, `mfg_prod_planing_qty`, COALESCE(SUM(`mfg_prod_in`), 0) AS testAMT, `mfg_prod_type` FROM `mfg_production_2` GROUP BY mfg_transaction,mfg_ref_id ) table1 ON `mfg_production_2`.`mfg_transaction` = table1.`mfg_transaction` AND `mfg_production_2`.`mfg_ref_id` = table1.`mfg_ref_id` LEFT JOIN products ON `mfg_production_2`.`mfg_sku` = `products`.`p_sku` WHERE `mfg_production_2`.`mfg_prod_type` = 'C' AND `mfg_production_2`.`company_branch` = :branch AND `mfg_production_2`.`mfg_sku_type` = 'FG' GROUP BY `mfg_production_2`.`mfg_transaction`,`mfg_production_2`.`step_count` ORDER BY `mfg_production_2`.`ID` DESC",
       { replacements: { branch: req.branch }, type: invtDB.QueryTypes.SELECT }
@@ -29,7 +38,7 @@ router.get("/pending", [auth.isAuthorized], async (req, res) => {
         if (item0.totalReqQty > item0.testAMT) {
           qtycount++;
           stmt1 = await invtDB.query(
-            "SELECT `mfg_pro_apr_sku`, `mfg_ref_transid_2`, `mfg_ref_transid_1`, `mfg_approve_in_qty`, COALESCE( SUM(`mfg_approve_in_qty`), 0 ) AS `totalApprovedQty` FROM `mfg_production_3` WHERE `mfg_ref_transid_1` = :transaction1 AND `mfg_ref_transid_2` = :transaction2 AND `mfg_production_3`.`company_branch` = :branch GROUP BY mfg_production_3.mfg_ref_transid_2",
+            "SELECT `mfg_pro_apr_sku`, `mfg_ref_transid_2`, `mfg_ref_transid_1`, `mfg_approve_in_qty`, COALESCE( SUM(`mfg_approve_in_qty`), 0 ) AS `totalApprovedQty` FROM `mfg_production_3` WHERE `mfg_ref_transid_1` = :transaction1 AND `mfg_ref_transid_2` = :transaction2 AND `mfg_production_3`.`company_branch` = :branch AND `mfg_production_3`.`fg_status` = 'ACTIVE' GROUP BY mfg_production_3.mfg_ref_transid_2",
             {
               replacements: { transaction1: item0.mfg_ref_id, transaction2: item0.mfg_transaction, branch: req.branch },
               type: invtDB.QueryTypes.SELECT,
@@ -40,7 +49,7 @@ router.get("/pending", [auth.isAuthorized], async (req, res) => {
               let item1 = stmt1[j];
               // stmt1.forEach(async (item1) => {
               let completedQTY;
-              let stmt2 = await invtDB.query("SELECT COALESCE(SUM(mfg_approve_in_qty),0) AS totalApprovedQty FROM `mfg_production_3` WHERE mfg_pro_apr_sku = :sku AND mfg_ref_transid_1 = :transaction1 AND mfg_ref_transid_2 = :transaction2 AND `mfg_production_3`.`company_branch` = :branch", {
+              let stmt2 = await invtDB.query("SELECT COALESCE(SUM(mfg_approve_in_qty),0) AS totalApprovedQty FROM `mfg_production_3` WHERE mfg_pro_apr_sku = :sku AND mfg_ref_transid_1 = :transaction1 AND mfg_ref_transid_2 = :transaction2 AND `mfg_production_3`.`company_branch` = :branch AND `mfg_production_3`.`fg_status` = 'ACTIVE'", {
                 replacements: { sku: item1.mfg_pro_apr_sku, transaction1: item1.mfg_ref_transid_1, transaction2: item1.mfg_ref_transid_2, branch: req.branch },
                 type: invtDB.QueryTypes.SELECT,
               });
@@ -213,6 +222,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
     pprqty: "required|integer|min:1",
     pprrequest1: "required",
     pprrequest2: "required",
+    rate: "required",
   });
   if (validation.fails()) {
     return res.json({ status: "error", success: false, message: "Something is missing in form field to supply", data: validation.errors.all() });
@@ -273,7 +283,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
               stmt7.map(async (item7) => {
                 if (item7.approvedQty + helper.number(req.body.pprqty) <= item7.totalPPRQTY) {
                   let stmt8 = await invtDB.query(
-                    "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_date`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`) VALUES (:branch,:sku, :totalIn, :by, :insertdate, :fulldate, :transaction, :ppr_id, :mfg_id, :location, :mfginsertdate,'IN', :pprcreatedby, :mfgcreatedby)",
+                    "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_date`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`in_fg_rate`) VALUES (:branch,:sku, :totalIn, :by, :insertdate, :fulldate, :transaction, :ppr_id, :mfg_id, :location, :mfginsertdate,'IN', :pprcreatedby, :mfgcreatedby, :rate)",
                     {
                       replacements: {
                         branch: req.branch,
@@ -289,6 +299,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                         mfginsertdate: item3.mfg_full_date,
                         pprcreatedby: item3.mfg_ppr_created_by,
                         mfgcreatedby: item3.mfg_approved_by,
+                        rate: req.body.rate,
                       },
                       type: invtDB.QueryTypes.INSERT,
                       transaction: t,
@@ -296,7 +307,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                   );
                   if (stmt8.length > 0) {
                     let stmt9 = await invtDB.query(
-                      "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt)",
+                      "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`,`rate`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt, :rate)",
                       {
                         replacements: {
                           sku: item3.mfg_sku,
@@ -310,6 +321,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                           insert_by: req.logedINUser,
                           mfg_created_dt: item3.mfg_full_date,
                           insert_dt: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+                          rate: req.body.rate,
                         },
                         type: invtDB.QueryTypes.INSERT,
                         transaction: t,
@@ -382,7 +394,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
 
                 if (item11.approvedQty + helper.number(req.body.pprqty) <= item11.totalPPRQTY) {
                   let stmt14 = await invtDB.query(
-                    "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_date`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`) VALUES (:branch,:sku, :totalIn, :by, :insertdate, :fulldate, :transaction, :ppr_id, :mfg_id, :location, :mfginsertdate, 'IN', :pprcreatedby, :mfgcreatedby)",
+                    "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_date`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`in_fg_rate`) VALUES (:branch,:sku, :totalIn, :by, :insertdate, :fulldate, :transaction, :ppr_id, :mfg_id, :location, :mfginsertdate, 'IN', :pprcreatedby, :mfgcreatedby, :rate)",
                     {
                       replacements: {
                         branch: req.branch,
@@ -398,6 +410,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                         mfginsertdate: item11.mfg_full_date,
                         pprcreatedby: item11.mfg_ppr_created_by,
                         mfgcreatedby: item11.mfg_approved_by,
+                        rate: req.body.rate,
                       },
                       type: invtDB.QueryTypes.INSERT,
                       transaction: t,
@@ -405,7 +418,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                   );
                   if (stmt14.length > 0) {
                     let stmt15 = await invtDB.query(
-                      "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt)",
+                      "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`,`rate`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt, :rate)",
                       {
                         replacements: {
                           sku: item11.mfg_sku,
@@ -419,6 +432,7 @@ router.post("/saveFGs", [auth.isAuthorized, auth.checkDuplicacy_db], async (req,
                           insert_by: req.logedINUser,
                           mfg_created_dt: item11.mfg_full_date,
                           insert_dt: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+                          rate: req.body.rate,
                         },
                         type: invtDB.QueryTypes.INSERT,
                         transaction: t,
