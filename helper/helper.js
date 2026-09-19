@@ -590,6 +590,7 @@ exports.saveComponentInwardData = async function (body, txnId, insertDt) {
   }
 };
 
+/*
 exports.errorResponse = function (res, error) {
   const errorId = Math.floor(
     1000000000 + Math.random() * 9000000000
@@ -664,6 +665,22 @@ exports.errorResponse = function (res, error) {
     },
   });
 };
+*/
+
+
+exports.errorResponse = function (res, error) {
+  const statusCode = error.status || error.statusCode || 500;
+
+  const errorMessage = error.message || "Unknown error occurred";
+
+  return res.status(statusCode).json({
+    code: statusCode,
+    error: errorMessage,
+    message: "An error occurred while processing your request.",
+  });
+};
+
+
 
 exports.genTransaction = async function (forNumber, transaction) {
   const rows = await invtDB.query(
