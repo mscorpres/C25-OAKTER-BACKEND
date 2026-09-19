@@ -1,6 +1,6 @@
 const { invtDB } = require("../../config/db/connection");
 
-const CUTOFF_DATE = "2026-07-06 11:45:00";
+const CUTOFF_DATE = "2026-06-07 19:00:00";
 exports.CUTOFF_DATE = CUTOFF_DATE;
 const INR_CURRENCY = 364907247; //INR
 

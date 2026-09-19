@@ -16,6 +16,11 @@ const uniqueFileName = () => {
   const timestamp = Date.now();
   return `${uniqueId}_${timestamp}.xml`;
 };
+const {
+  lastFGWeightedAverageRate,
+} = require("../../../../helper/utils/newFGavgRate");
+
+
 //RM - RM AND SF - SF Transactions List
 router.post("/xml_report_rmsf_same", async (req, res) => {
   const searchBy = req.body.wise;
@@ -1232,7 +1237,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
 
     // CREDIT (IN) balance: all IN/FGMIN for this SKU, any location
     const creditStmt = await invtDB.query(
-      "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYin` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN') AND `fg_status` = 'ACTIVE'",
+      "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYin` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN', 'TRANSFER') AND `fg_status` = 'ACTIVE'",
       {
         replacements: { sku: stmt0[0].p_sku },
         type: invtDB.QueryTypes.SELECT,
@@ -1264,11 +1269,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
       });
     }
 
-    const avgRate = require("../../../../helper/utils/avgRate");
-    const avr_rate = await avgRate.getWeightedSKURate(
-      req.body.product,
-      moment(new Date()).format("YYYY-MM-DD HH:mm:ss")
-    );
+    const avr_rate = await lastFGWeightedAverageRate(stmt0[0].p_sku);
 
     return res.json({
       success: true,
