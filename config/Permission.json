@@ -305,7 +305,7 @@
           "user_id": "CRN3901801",
           "name": "Kamal kohli",
           "email": "kamal.kohli@oakter.com",
-          "can_create_po": false,
+          "can_create_po": true,
           "can_edit_own_po": true,
           "can_edit_team_po": false,
           "can_approve_po_first_level": false,
