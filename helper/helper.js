@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require("uuid");
 const path = require("path");
 const axios = require("axios");
 const { validate } = require("deep-email-validator");
+const crypto = require("crypto");
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
