@@ -13,6 +13,7 @@ const VENDOR_TYPES = {
   s01: "SortIn",
   r01: "RejIn",
   p01: "ProdIn",
+  BT: "Branch Transfer",
 };
 
 // Utility functions
