@@ -266,7 +266,7 @@ router.post(
       issueQty: "required|min:0",
       pickLocation: "required",
       rate: "required",
-      remark: "required",
+      // remark: "required",
     });
 
     if (validation.fails()) {
@@ -705,7 +705,7 @@ router.post("/requestCancellation", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               type: "C",
-              remark: req.body.remark,
+              remark: req.body.remark ?? "",
               identity: stmt[i].ID,
               component: stmt[i].components_key,
               transaction: req.body.transaction,
