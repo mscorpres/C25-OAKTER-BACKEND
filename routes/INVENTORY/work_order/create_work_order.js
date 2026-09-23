@@ -135,9 +135,10 @@ router.post(
               );
               if (stmt_client.length > 0) {
                 let stmt_insert_wo = await invtDB.query(
-                  "INSERT INTO `wo_purchase_req` (`wo_remark`,`wo_payment_terms_day`,`company_branch`,`wo_billing_add_id`,`wo_billing_addr`,`wo_transaction`,`wo_issue_qty`,`wo_dispatch_addr`,`wo_ship_id`,`wo_terms_condition`,`wo_payment_terms`,`wo_project_name`,`wo_cost_center`,`wo_client_id`,`wo_client_address`,`wo_client_add_id`,`wo_sku`,`wo_subject_id`,`wo_order_qty`,`wo_order_rate`,`wo_duedate`,`wo_insert_date`,`wo_insert_by`,`wo_sku_transaction`,`wo_client_type`, `wo_hsncode`, `wo_gsttype`, `wo_gstrate`, `wo_sgst`, `wo_cgst`, `wo_igst`)VALUES (:remark,:termsdays,:branch,:billingaddrid,:billingaddr,:wotransaction,'0',:dispatch_address,:dispatch_id,:termscondition,:paymentterms,:project_id,:cost_center,:clientid,:client_address,:client_branch,:sku,:recipe,:qty,:rate,:duedate,:insertdate,:by,:skutransaction,:clienttype,:hsncode,:gsttype,:gstrate,:sgst,:cgst,:igst)",
+                  "INSERT INTO `wo_purchase_req` ((`txn_session`,`wo_remark`,`wo_payment_terms_day`,`company_branch`,`wo_billing_add_id`,`wo_billing_addr`,`wo_transaction`,`wo_issue_qty`,`wo_dispatch_addr`,`wo_ship_id`,`wo_terms_condition`,`wo_payment_terms`,`wo_project_name`,`wo_cost_center`,`wo_client_id`,`wo_client_address`,`wo_client_add_id`,`wo_sku`,`wo_subject_id`,`wo_order_qty`,`wo_order_rate`,`wo_duedate`,`wo_insert_date`,`wo_insert_by`,`wo_sku_transaction`,`wo_client_type`, `wo_hsncode`, `wo_gsttype`, `wo_gstrate`, `wo_sgst`, `wo_cgst`, `wo_igst`)VALUES (:txn_session,:remark,:termsdays,:branch,:billingaddrid,:billingaddr,:wotransaction,'0',:dispatch_address,:dispatch_id,:termscondition,:paymentterms,:project_id,:cost_center,:clientid,:client_address,:client_branch,:sku,:recipe,:qty,:rate,:duedate,:insertdate,:by,:skutransaction,:clienttype,:hsncode,:gsttype,:gstrate,:sgst,:cgst,:igst)",
                   {
                     replacements: {
+                      txn_session: helper.generateTxnSession(),
                       remark: req.body.remark == "" ? "--" : req.body.remark,
                       termsdays:
                         req.body.paymenttermsday == ""

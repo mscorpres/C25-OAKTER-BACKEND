@@ -129,6 +129,7 @@ module.exports = function (app) {
   );
   app.use("/createwo", require("./INVENTORY/work_order/create_work_order"));
   app.use("/wo_challan", require("./INVENTORY/work_order/wo_challan"));
+  app.use("/woSupplementary", require("./INVENTORY/work_order/woSupplementary"))
   app.use(
     "/branchTransfer",
     require("./INVENTORY/store/branchTransfer/branchTransfer")
