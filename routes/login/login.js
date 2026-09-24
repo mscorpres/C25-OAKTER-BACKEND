@@ -1092,7 +1092,7 @@ router.post("/register", [auth.isAuthorized], async (req, res) => {
           });
         } else {
           let stmt4 = await invtDB.query(
-            "INSERT INTO `admin_login` (`user_name`, `Mobile_No`, `Email_ID`, `Password`, `temp_password`, `ask_change_password`, `isMobileConfirmed`, `isEmailConfirmed`, `CustID`, `reg_date`, `login_status`, project  , vendor_id) VALUES (:fullname, :mobile, :email, :password, :temppassword, :askToChangePassword, :mobileVerified, :emailVerified, :custid, :regdate, :status, :project , :vendor)",
+            "INSERT INTO `admin_login` (`user_name`,`company_id`, `Mobile_No`, `Email_ID`, `Password`, `temp_password`, `ask_change_password`, `isMobileConfirmed`, `isEmailConfirmed`, `CustID`, `reg_date`, `login_status`, project  , vendor_id) VALUES (:fullname,:company_id, :mobile, :email, :password, :temppassword, :askToChangePassword, :mobileVerified, :emailVerified, :custid, :regdate, :status, :project , :vendor)",
             {
               replacements: {
                 fullname: req.body.username,
@@ -1100,6 +1100,7 @@ router.post("/register", [auth.isAuthorized], async (req, res) => {
                 email: req.body.email,
                 password: await bcrypt.hash(req.body.password, 10),
                 temppassword: req.body.password,
+                company_id:"BROAKTRC25",
                 askToChangePassword: password_status,
                 mobileVerified: mobile_status,
                 emailVerified: email_status,
