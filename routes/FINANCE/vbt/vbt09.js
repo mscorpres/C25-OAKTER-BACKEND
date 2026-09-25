@@ -428,7 +428,7 @@ router.post("/add_vbt09", [auth.isAuthorized], async (req, res) => {
     }
 
     if (Math.abs(Number(req.body.bill_amount) - Number(total_ven_ammount).toFixed(2)) != 0) {
-      return res.json({ success:false, status: "error", message: { msg: `Bill ammount ${req.body.bill_amount} and Vendor amount ${total_ven_ammount} not match ` } });
+      return res.json({ success:false, status: "error", message: `Bill ammount ${req.body.bill_amount} and Vendor amount ${total_ven_ammount} not match ` } );
     }
 
     if (Math.abs(Number(Number(total_credit).toFixed(2)) - Number(Number(total_debit).toFixed(2))) != 0) {

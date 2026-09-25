@@ -653,7 +653,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
         if (req.body.tds_gl_code[i] == "--") {
           await transaction.rollback();
-          return res.json({ success:false, status: 'error', message: { msg: 'TDS Gl not selected.' } })
+          return res.json({ success:false, status: 'error', message: 'TDS Gl not selected.' })
         }
 
         let insert_tds_gl_code = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
