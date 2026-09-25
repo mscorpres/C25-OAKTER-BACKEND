@@ -197,6 +197,8 @@ module.exports = function (app) {
   app.use("/tally/vbt05", require("./FINANCE/vbt/vbt05"));
   app.use("/tally/vbt06", require("./FINANCE/vbt/vbt06"));
   app.use("/tally/vbt07", require("./FINANCE/vbt/vbt07"));
+  app.use("/tally/vbt08", require("./FINANCE/vbt/vbt08"));
+  app.use("/tally/vbt09", require("./FINANCE/vbt/vbt09"));
   app.use("/tally/vbt_report", require("./FINANCE/vbt/vbt_report"));
   app.use("/tally/voucher", require("./FINANCE/vouchers/vouchers"));
   app.use("/tally/jv", require("./FINANCE/vouchers/journal_posting"));
