@@ -8,7 +8,6 @@ const router = express.Router();
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 
-
 //Required Passing Parameters:
 
 //1.  product
@@ -65,7 +64,7 @@ function byPart(a, b) {
 
 //     let location_key = "";
 //     // A21 R1 store LOCATION
-//     if (req.branch == "BRALWR36") {
+//     if (req.branch == "BROAKTRC25") {
 //       location_key = "202381510340465";
 //     }
 //     // B29 R1 store LOCATION
@@ -340,16 +339,12 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     const fromdate = moment(date[0], "DD-MM-YYYY").format("YYYY-MM-DD");
     const todate = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
 
-    const durationInMonths = moment(date[1], "DD-MM-YYYY").diff(
-      moment(date[0], "DD-MM-YYYY"),
-      "months"
-    );
+    const durationInMonths = moment(date[1], "DD-MM-YYYY").diff(moment(date[0], "DD-MM-YYYY"), "months");
     if (durationInMonths > 3) {
       return res.json({
         status: "error",
-        message:
-          "on the w.e.f Nov 11, 2021: We can provide you 90 days OR (3 months) data only",
-          success: false,
+        message: "on the w.e.f Nov 11, 2021: We can provide you 90 days OR (3 months) data only",
+        success: false,
       });
     }
 
@@ -357,42 +352,36 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       return res.json({
         status: "error",
         message: "Please supply date",
-        success: false
+        success: false,
       });
     }
     if (req.body.product == "") {
       return res.json({
         status: "error",
         message: "Please supply product",
-        success: false
+        success: false,
       });
     }
     if (req.body.subject == "0") {
       return res.json({
         status: "error",
         message: "Please supply product BOM [Bill Of Material]",
-        success: false
+        success: false,
       });
     }
 
     let location_key = "";
-    
+
     // C25 R1 store LOCATION
     if (req.branch == "BROAKTRC25") {
       location_key = "202381510340465";
     }
-    
-
-    
 
     // BRANCH R1 store STOCK LOCATION
-    let stmt_get_a21 = await invtDB.query(
-      "SELECT locations FROM `location_allotted` WHERE `loc_all_key` = :location_key",
-      {
-        replacements: { location_key: location_key },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    let stmt_get_a21 = await invtDB.query("SELECT locations FROM `location_allotted` WHERE `loc_all_key` = :location_key", {
+      replacements: { location_key: location_key },
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     let all_branch__location = [];
     if (stmt_get_a21.length > 0) {
@@ -413,7 +402,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       {
         replacements: { subject: req.body.subject },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
     const data = [];
     stmt1.map(async (item) => {
@@ -427,7 +416,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             location: all_branch__location,
           },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
 
       let inward_all_qty, outward_all_qty, opening_qty;
@@ -436,13 +425,11 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         outward_all_qty = stmt3[0].outward;
         opening_qty = stmt3[0].inbefor - stmt3[0].outbefore;
       } else {
-        (inward_all_qty = 0), (outward_all_qty = 0), (opening_qty = 0);
+        ((inward_all_qty = 0), (outward_all_qty = 0), (opening_qty = 0));
       }
 
       //CLOSING QUANTITY
-      let closing_qty = checkNegativeValue(
-        opening_qty + inward_all_qty - outward_all_qty
-      );
+      let closing_qty = checkNegativeValue(opening_qty + inward_all_qty - outward_all_qty);
 
       //REPLENISHMENT QUANTITY
       let replenish_qty;
@@ -453,13 +440,10 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       }
 
       //IN-TRANSIT
-      let stmt5 = await invtDB.query(
-        "SELECT COALESCE(SUM(`po_order_qty`), 0) AS `totalPO_order`, po_transaction FROM `po_purchase_req` WHERE `po_part_no` = :component GROUP BY `po_transaction`",
-        {
-          replacements: { component: item.component_key },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      let stmt5 = await invtDB.query("SELECT COALESCE(SUM(`po_order_qty`), 0) AS `totalPO_order`, po_transaction FROM `po_purchase_req` WHERE `po_part_no` = :component GROUP BY `po_transaction`", {
+        replacements: { component: item.component_key },
+        type: invtDB.QueryTypes.SELECT,
+      });
       if (stmt5.length > 0) {
         po_order_qty = stmt5[0].totalPO_order;
         po_transaction = stmt5[0].po_transaction;
@@ -481,11 +465,8 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             type: invtDB.QueryTypes.SELECT,
           },
         ),
-        
-        require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
-          item.component_key,
-          todate,
-        ),
+
+        require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(item.component_key, todate),
       ]);
 
       if (stmt6.length > 0) {
@@ -499,13 +480,10 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       w_avr_rate = stmtWAR || 0;
 
       //TOTAL ROWS
-      let stmt7 = await invtDB.query(
-        "SELECT COUNT(`ID`) AS `COUNT` FROM `bom_quantity` WHERE `subject_under` = :subject",
-        {
-          replacements: { subject: req.body.subject },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      let stmt7 = await invtDB.query("SELECT COUNT(`ID`) AS `COUNT` FROM `bom_quantity` WHERE `subject_under` = :subject", {
+        replacements: { subject: req.body.subject },
+        type: invtDB.QueryTypes.SELECT,
+      });
 
       //FETCH ALTERNATIVE PART CODES
       let alt_component_part = [];
@@ -519,17 +497,14 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             product: item.p_sku,
           },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
       if (stmt8.length > 0) {
         if (item.bom_status == "ALT") {
-          let stmt9 = await invtDB.query(
-            "SELECT * FROM `components` WHERE `component_key` = :component",
-            {
-              replacements: { component: stmt8[0].alt_daughter_component },
-              type: invtDB.QueryTypes.SELECT,
-            }
-          );
+          let stmt9 = await invtDB.query("SELECT * FROM `components` WHERE `component_key` = :component", {
+            replacements: { component: stmt8[0].alt_daughter_component },
+            type: invtDB.QueryTypes.SELECT,
+          });
           if (stmt9.length > 0) {
             alt_component_part.push(stmt9[0].c_part_no);
             alt_component_name.push(decode(stmt9[0].c_name));
@@ -545,11 +520,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         alt_component_part = ["N/A"];
         alt_component_name = ["N/A"];
       }
-      console.log(
-        "ALTERNATIVE PARTS: ",
-        alt_component_part,
-        alt_component_name
-      );
+      console.log("ALTERNATIVE PARTS: ", alt_component_part, alt_component_name);
 
       if (alt_component_name.length == 0) {
         alt_component_part = "--";
@@ -562,32 +533,26 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         {
           replacements: { component: item.component_key },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
       transitQTY = transitQTY = stmt10.length > 0 ? stmt10[0].transit_qty : 0;
 
       let bom_status;
       if (item.bom_status == "A") {
-        bom_status =
-          '<span style="color: #2db71c; font-weight: 600;">ACTIVE</span>';
+        bom_status = '<span style="color: #2db71c; font-weight: 600;">ACTIVE</span>';
       } else if (item.bom_status == "ALT") {
-        bom_status =
-          '<span style="color: #ff9800; font-weight: 600;">ALTERNATIVE</span>';
+        bom_status = '<span style="color: #ff9800; font-weight: 600;">ALTERNATIVE</span>';
       } else {
-        bom_status =
-          '<span style="color: #e53935; font-weight: 600;">INACTIVE</span>';
+        bom_status = '<span style="color: #e53935; font-weight: 600;">INACTIVE</span>';
       }
 
       let com_status;
       if (item.c_is_enabled == "N") {
-        com_status =
-          '<span style="color: #2db71c; font-weight: 600;">ENABLED</span>';
+        com_status = '<span style="color: #2db71c; font-weight: 600;">ENABLED</span>';
       } else if (item.c_is_enabled == "Y") {
-        com_status =
-          '<span style="color: #e53935; font-weight: 600;">DISABLED</span>';
+        com_status = '<span style="color: #e53935; font-weight: 600;">DISABLED</span>';
       } else {
-        com_status =
-          '<span style="color: #ff9800; font-weight: 600;">N/A</span>';
+        com_status = '<span style="color: #ff9800; font-weight: 600;">N/A</span>';
       }
 
       let bom_category;
@@ -603,11 +568,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         bom_category = "N/A";
       }
 
-      let weightedPurchaseRate =
-        await require("../../../helper/utils/avgRate").getWeightedPurchaseRate(
-          item.component_key,
-          moment(stmt3[0].inward_date).format("YYYY-MM-DD HH:mm:ss")
-        );
+      let weightedPurchaseRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate(item.component_key, moment(stmt3[0].inward_date).format("YYYY-MM-DD HH:mm:ss"));
 
       data.push({
         totalOB: "-",
