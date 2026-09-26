@@ -1141,7 +1141,36 @@ router.post("/fetch_wo_mins", [auth.isAuthorized], async (req, res) => {
     }
 
     let stmt = await invtDB.query(
-      "SELECT *, SUM(wo_m_received_qty) AS total_min_qty FROM wo_material_received LEFT JOIN components ON wo_material_received.wo_m_component = components.component_key WHERE wo_m_work_id = :wo_id AND wo_insert_type = 'IN' AND company_branch = :branch GROUP BY wo_m_component, wo_min_id, wo_m_received_rate",
+      `SELECT 
+        c.c_name AS component_name,
+        c.c_part_no AS part_code,
+        c.component_key,
+        COALESCE(in_summary.total_in, 0) AS total_in_qty,
+        COALESCE(out_summary.total_out, 0) AS total_out_qty,
+        (COALESCE(in_summary.total_in, 0) - COALESCE(out_summary.total_out, 0)) AS total_available_qty
+      FROM (
+        SELECT 
+          wo_m_component, 
+          SUM(wo_m_received_qty) AS total_in
+        FROM wo_material_received
+        WHERE wo_m_work_id = :wo_id 
+          AND wo_insert_type = 'IN' 
+          AND company_branch = :branch
+        GROUP BY wo_m_component
+      ) in_summary
+      LEFT JOIN (
+        SELECT 
+          wo_m_component, 
+          SUM(wo_out_qty) AS total_out
+        FROM wo_material_received
+        WHERE wo_m_work_id = :wo_id 
+          AND wo_insert_type = 'OUT' 
+          AND wo_m_status != 'C'
+          AND company_branch = :branch
+        GROUP BY wo_m_component
+      ) out_summary ON in_summary.wo_m_component = out_summary.wo_m_component
+      LEFT JOIN components c ON in_summary.wo_m_component = c.component_key
+      WHERE (COALESCE(in_summary.total_in, 0) - COALESCE(out_summary.total_out, 0)) > 0`,
       {
         replacements: { wo_id: req.body.wo_id, branch: req.branch },
         type: invtDB.QueryTypes.SELECT,
@@ -1149,65 +1178,23 @@ router.post("/fetch_wo_mins", [auth.isAuthorized], async (req, res) => {
     );
 
     if (stmt.length > 0) {
-      let final = [];
+      let final = stmt.map((row) => ({
+        component_name: row.component_name,
+        part_code: row.part_code,
+        component_key: row.component_key,
+        min_available_qty: Number(row.total_available_qty),
+        total_out_qty: Number(row.total_out_qty),
+      }));
 
-      for (let i = 0; i < stmt.length; i++) {
-        let stmt_2 = await invtDB.query(
-          "SELECT * FROM wo_material_received WHERE wo_m_work_id = :wo_id AND wo_m_status != 'C' AND wo_insert_type = 'OUT' AND wo_min_id = :min_id AND wo_m_component = :component AND wo_out_rate = :out_rate",
-          {
-            replacements: {
-              wo_id: req.body.wo_id,
-              min_id: stmt[i].wo_min_id,
-              component: stmt[i].wo_m_component,
-              out_rate: stmt[i].wo_m_received_rate,
-            },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-
-        let totalOUT = 0;
-        for (let j = 0; j < stmt_2.length; j++) {
-          totalOUT = parseInt(totalOUT) + parseInt(stmt_2[j].wo_out_qty);
-        }
-
-        let pending_quantity = stmt[i].total_min_qty - totalOUT;
-
-        if (pending_quantity == 0) {
-          continue;
-        }
-
-        final.push({
-          component_name: stmt[i].c_name,
-          part_code: stmt[i].c_part_no,
-          component_key: stmt[i].component_key,
-          min_id: stmt[i].wo_min_id,
-          min_date: moment(stmt[i].wo_min_date, "YYYY-MM-DD").format(
-            "DD-MM-YYYY"
-          ),
-          min_eway_bill: stmt[i].wo_min_eway_bill,
-          min_rate: stmt[i].wo_m_received_rate,
-          min_available_qty: pending_quantity,
-          transaction: stmt[i].wo_m_transaction_id,
-        });
-      }
-
-      return res.json({
-        status: "success",
-        success: true,
-        message: "Data fetched successfully",
-        data: final,
-      });
+      return res.json({success: true, status: "success", data: final });
     } else {
-      return res.json({
-        status: "error",
-        success: false,
-        message: "No data found",
-      });
+      return res.json({ success: false, status: "error", message: "No data found"  });
     }
   } catch (err) {
-    return helper.errorResponse(res, err);
+    return res.json({ success: false, status: "error", message: "Internal Error!!!If this condition persists, contact your system administrator", error: err.stack });
   }
 });
+
 
 //ALL BOM Components
 router.post("/allbomcomponents", [auth.isAuthorized], async (req, res) => {
