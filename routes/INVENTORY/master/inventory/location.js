@@ -189,13 +189,16 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
     }
   }
 
-  if (req.logedINUser !== "CRN301718" || req.logedINUser !== "CRN5981990") {
+  const allowedUsers = ["CRN301718", "CRN5981990"];
+
+   if (!allowedUsers.includes(req.logedINUser)) {
     return res.json({
-      code: 500,
-      message: "You are not authorized to add location" ,
-      status: "error",
-    });
+    code: 500,
+    message: "You are not authorized to add location",
+    status: "error",
+  });
   }
+
 
   try {
     var new_key = new Date().getTime();
