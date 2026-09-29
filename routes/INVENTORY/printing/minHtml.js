@@ -152,7 +152,7 @@ exports.minHtml = (data, parts, reverse_parts) => {
                       <h5>Delivery Addr : </h5>
                   </td>
                   <td>
-                      <p>C-26, Hosiery Complex Phase 2,
+                      <p>C-25, Hosiery Complex Phase 2,
                       Gautambuddha Nagar, Noida, Uttar Pradesh</p>
                   </td>
               </tr>
