@@ -134,7 +134,7 @@ exports.minHtml = (data, parts, reverse_parts) => {
               RIOT LABZ PRIATE LIMITED <br>
               Gautambuddha Nagar, Uttar Pradesh - 201305
           </div>
-          <h5>GSTIN NO :08AAHCR1005Q1Z6</h5>
+          <h5>GSTIN NO :09AAHCR1005Q1Z4</h5>
       </section>
       <section class="middle-section">
   
@@ -161,7 +161,7 @@ exports.minHtml = (data, parts, reverse_parts) => {
                       <h5>GSTIN NO. :</h5>
                   </td>
                   <td>
-                      <p>08AAHCR1005Q1Z6</p>
+                      <p>09AAHCR1005Q1Z4</p>
                   </td>
               </tr>
               <tr>
