@@ -200,7 +200,7 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
 
     let checkPermission = await invtDB.query(
       `SELECT CustID FROM admin_login 
-       WHERE CustID IN ('CRN9560637','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
+       WHERE CustID IN ('CRN9560637','CRN5981990','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
        AND CustID = :userCustID`,
       {
         replacements: { userCustID: req.logedINUser },
