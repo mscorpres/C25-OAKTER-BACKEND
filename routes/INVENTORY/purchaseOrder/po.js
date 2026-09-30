@@ -176,6 +176,68 @@ router.post("/fetchStatus4PO", [auth.isAuthorized], async (req, res) => {
   }
 });
 
+
+
+router.post("/pprList", [auth.isAuthorized], async (req, res) => {
+  
+  const incomingSearchValue = req.body.searchValue ?? req.body.project_name;
+  if (!incomingSearchValue || String(incomingSearchValue).trim() === "") {
+    return res.json({
+      status: "error",
+      success: false,
+      message: "searchValue OR project_name is required",
+    });
+  }
+
+  req.body.searchValue = incomingSearchValue;
+
+  try {
+    let main_stmt;
+   
+    main_stmt = await invtDB.query(
+      "SELECT `mfg_production_1`.*, `admin_login`.`user_name`, `products`.`p_name` FROM `mfg_production_1` LEFT JOIN `products` ON `mfg_production_1`.`prod_product_sku` = `products`.`p_sku` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `mfg_production_1`.`prod_inserted_by` WHERE `mfg_production_1`.`prod_project` = :project AND `mfg_production_1`.`prod_branch` = :branch ORDER BY `mfg_production_1`.`ID` DESC",
+      {
+        replacements: { project: req.body.searchValue, branch: req.branch },
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    const seen = new Set();
+    const resultRaw = main_stmt
+      .map((item) => String(item.prod_transaction || "").trim())
+      .filter((txn) => txn !== "")
+      .filter((txn) => {
+        if (seen.has(txn)) return false;
+        seen.add(txn);
+        return true;
+      })
+      .map((txn) => ({ text: txn }));
+
+    const result = resultRaw.map((row, idx) => ({
+      id: row.text,
+      text: row.text,
+    }));
+
+    if (result.length <= 0) {
+      // Dropdown-friendly "none" response
+      return res.json({
+        status: "success",
+        success: true,
+        data: [{ id: "0", text: "None" }],
+      });
+    }
+
+    return res.json({ status: "success", success: true, data: result });
+  } catch (err) {
+    return res.json({
+      success: false,
+      message: "Internal Error<br/>If this condition persists, contact your system administrator" ,
+      status: "error",
+      error: err.stack,
+    });
+  }
+});
+
 //CREATE PURCHASE ORDER
 router.post(
   "/createPO",
@@ -4104,7 +4166,7 @@ router.post(
     }
 
     try {
-      const { component_code, vencode, project } = req.body;
+      const { component_code, vencode, project, pprId } = req.body;
 
       // 1. Get Component Details
       const result = await invtDB.query(
@@ -4129,11 +4191,11 @@ router.post(
       const item = result[0];
       const gstrate = item.c_gst === "--" || !item.c_gst ? 0 : item.c_gst;
 
-      const rate =
-        await require("../../../helper/utils/avgRate").getLastInwardRate(
-          component_code,
-          vencode
-        );
+      const avgRateUtil = require("../../../helper/utils/avgRate");
+      const rate = await avgRateUtil.getLastInwardRateDisplayForComponentDetail(
+        component_code,
+        vencode
+      );
       const branch = req.branch;
       const location_key = "2023112717950595";
 
@@ -4184,6 +4246,7 @@ router.post(
         closing_stock = stockResult[0]?.closing_qty || 0;
       }
 
+      // Keep existing project logic unchanged
       let projected_qty = 0;
 
       const projectBOMResult = await invtDB.query(
@@ -4201,28 +4264,35 @@ router.post(
       );
 
       if (projectBOMResult.length > 0) {
-        for (const project of projectBOMResult) {
-          const bomQtyResult = await invtDB.query(
-            `SELECT bq.qty 
-             FROM bom_quantity bq
-             INNER JOIN bom_recipe br ON bq.subject_under = br.subject_id
-             WHERE bq.subject_under = :bom_id 
-             AND bq.component_id = :component_id
-             AND br.bom_status = 'ENABLE'`,
-            {
-              replacements: {
-                bom_id: project.bomsubjectid,
-                component_id: component_code,
-              },
-              type: invtDB.QueryTypes.SELECT,
+        for (const projectItem of projectBOMResult) {
+          const bomIds = (projectItem.bomsubjectid || "")
+            .toString()
+            .split(",")
+            .map((x) => x.trim())
+            .filter((x) => x && x !== "--");
+
+          for (const bomId of bomIds) {
+            const bomQtyResult = await invtDB.query(
+              `SELECT bq.qty 
+               FROM bom_quantity bq
+               INNER JOIN bom_recipe br ON bq.subject_under = br.subject_id
+               WHERE bq.subject_under = :bom_id 
+               AND bq.component_id = :component_id
+               AND br.bom_status = 'ENABLE'`,
+              {
+                replacements: {
+                  bom_id: bomId,
+                  component_id: component_code,
+                },
+                type: invtDB.QueryTypes.SELECT,
+              }
+            );
+
+            if (bomQtyResult.length > 0) {
+              const bomComponentQty = bomQtyResult[0].qty || 0;
+              const projectQty = projectItem.projectQty || 0;
+              projected_qty += projectQty * bomComponentQty;
             }
-          );
-
-          if (bomQtyResult.length > 0) {
-            const bomComponentQty = bomQtyResult[0].qty || 0;
-            const projectQty = project.projectQty || 0;
-
-            projected_qty += projectQty * bomComponentQty;
           }
         }
       }
@@ -4234,19 +4304,144 @@ router.post(
          INNER JOIN project_master pm ON pr.po_project_name = pm.project_name
          WHERE pr.po_part_no = :component_code
          AND pm.project_name = :project_name
+         AND pr.po_status = 'A'
+         AND pr.po_part_status = 'ACTIVE'
          AND pm.bomsubjectid IS NOT NULL 
          AND pm.bomsubjectid != '' 
          AND pm.bomsubjectid != '--'`,
         {
           replacements: {
             component_code: component_code,
-            project_name: project, // AAA: Filter by specific project
+            project_name: project,
           },
           type: invtDB.QueryTypes.SELECT,
         }
       );
       if (executedQtyResult.length > 0) {
         executed_qty = executedQtyResult[0].total_executed_qty || 0;
+      }
+
+      const projectReleasedStmt = await invtDB.query(
+        `SELECT COALESCE(SUM(qty + COALESCE(other_qty, 0)), 0) AS released_qty
+         FROM rm_location
+         WHERE trans_type = 'REJECTION'
+           AND in_module = 'IN-TRN'
+           AND components_id = :component
+           AND company_branch = :branch
+           AND rm_loc_project_id = :project_name`,
+        {
+          replacements: {
+            component: component_code,
+            branch: req.branch,
+            project_name: project,
+          },
+          type: invtDB.QueryTypes.SELECT,
+        }
+      );
+      const projectReleasedQty = helper.number(
+        projectReleasedStmt[0]?.released_qty || 0
+      );
+      executed_qty = Math.max(
+        0,
+        helper.number(executed_qty) - projectReleasedQty
+      );
+
+      // PPR addon (extra fields only, existing fields untouched)
+      let ppr_plan_qty = null;
+      let ppr_executed_qty = null;
+      let ppr_available_qty = null;
+      if (pprId) {
+        const pprStmt = await invtDB.query(
+          `SELECT prod_planned_qty, prod_bom_subject, prod_project
+           FROM mfg_production_1
+           WHERE prod_transaction = :ppr
+             AND prod_branch = :branch
+           LIMIT 1`,
+          {
+            replacements: { ppr: pprId, branch: req.branch },
+            type: invtDB.QueryTypes.SELECT,
+          }
+        );
+
+        if (pprStmt.length > 0) {
+          const pprBomQtyResult = await invtDB.query(
+            `SELECT bq.qty
+             FROM bom_quantity bq
+             INNER JOIN bom_recipe br ON bq.subject_under = br.subject_id
+             WHERE bq.subject_under = :bom_id
+               AND bq.component_id = :component_id
+               AND br.bom_status = 'ENABLE'
+             LIMIT 1`,
+            {
+              replacements: {
+                bom_id: pprStmt[0].prod_bom_subject,
+                component_id: component_code,
+              },
+              type: invtDB.QueryTypes.SELECT,
+            }
+          );
+
+          const pprBomComponentQty =
+            pprBomQtyResult.length > 0 ? helper.number(pprBomQtyResult[0].qty) : 0;
+          const pprPlannedBaseQty = helper.number(pprStmt[0].prod_planned_qty);
+          ppr_plan_qty = helper.number(pprPlannedBaseQty * pprBomComponentQty);
+
+          const pprExecutedStmt = await invtDB.query(
+            `SELECT COALESCE(SUM(po_order_qty), 0) AS po_executed
+             FROM po_purchase_req
+             WHERE po_ppr_no = :ppr
+               AND po_part_no = :component
+               AND po_status = 'A'
+               AND po_part_status = 'ACTIVE'
+               AND company_branch = :branch`,
+            {
+              replacements: {
+                ppr: pprId,
+                component: component_code,
+                branch: req.branch,
+              },
+              type: invtDB.QueryTypes.SELECT,
+            }
+          );
+          const pprProjTrim =
+            pprStmt[0].prod_project != null &&
+            String(pprStmt[0].prod_project).trim() !== "" &&
+            String(pprStmt[0].prod_project).trim() !== "--"
+              ? String(pprStmt[0].prod_project).trim()
+              : "";
+          const pprReleasedSql =
+            pprProjTrim !== ""
+              ? `SELECT COALESCE(SUM(qty + COALESCE(other_qty, 0)), 0) AS released_qty
+                 FROM rm_location
+                 WHERE trans_type = 'REJECTION'
+                   AND in_module = 'IN-TRN'
+                   AND components_id = :component
+                   AND company_branch = :branch
+                   AND rm_ppr_credit_no = :ppr
+                   AND rm_loc_project_id = :proj`
+              : `SELECT COALESCE(SUM(qty + COALESCE(other_qty, 0)), 0) AS released_qty
+                 FROM rm_location
+                 WHERE trans_type = 'REJECTION'
+                   AND in_module = 'IN-TRN'
+                   AND components_id = :component
+                   AND company_branch = :branch
+                   AND rm_ppr_credit_no = :ppr`;
+          const pprReleasedStmt = await invtDB.query(pprReleasedSql, {
+            replacements: {
+              component: component_code,
+              branch: req.branch,
+              ppr: pprId,
+              ...(pprProjTrim !== "" ? { proj: pprProjTrim } : {}),
+            },
+            type: invtDB.QueryTypes.SELECT,
+          });
+          const releasedToRej = helper.number(
+            pprReleasedStmt[0]?.released_qty || 0
+          );
+          const poExecuted = helper.number(pprExecutedStmt[0]?.po_executed || 0);
+          ppr_executed_qty = Math.max(0, helper.number(poExecuted - releasedToRej));
+          ppr_available_qty = helper.number(ppr_plan_qty - ppr_executed_qty);
+        }
       }
 
       return res.json({
@@ -4257,16 +4452,24 @@ router.post(
           unit: item.units_name,
           hsn: item.c_hsn,
           gstrate: gstrate,
-          rate: helper.number(rate),
+          rate: rate,
           mfgCode: item.manufacturing_code,
           closing_stock: helper.number(closing_stock),
-          project_req_qty: helper.number(projected_qty), // **NEW: Added projected quantity**
+          project_req_qty: helper.number(projected_qty),
           po_exec_qty: helper.number(executed_qty),
+          ppr_plan_qty: ppr_plan_qty != null ? helper.number(ppr_plan_qty) : null,
+          ppr_executed_qty: ppr_executed_qty != null ? helper.number(ppr_executed_qty) : null,
+          ppr_available_qty: ppr_available_qty != null ? helper.number(ppr_available_qty) : null,
         },
       });
     } catch (err) {
       console.error("getComponentDetailsByCode Error:", err);
-      return helper.errorResponse(res, err);
+      return res.json({
+        success: false,
+        status: "error",
+        message: "an error occurred while executing your request",
+        error: err.message,
+      });
     }
   }
 );

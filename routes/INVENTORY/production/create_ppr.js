@@ -125,18 +125,16 @@ router.post("/fetchProductData", [auth.isAuthorized], async (req, res) => {
   }
 });
 
-router.post(
-  "/createPPR",
-  [auth.isAuthorized, auth.checkDuplicacy_db],
-  async (req, res) => {
-    let validation = new Validator(req.body, {
-      product: "required",
-      recipe: "required",
-      qty: "required",
-      duedate: "required",
-      location: "required",
-      customer: "required",
-    });
+router.post("/createPPR", [auth.isAuthorized, auth.checkDuplicacy_db], async (req, res) => {
+  let validation = new Validator(req.body, {
+    product: "required",
+    recipe: "required",
+    qty: "required",
+    duedate: "required",
+    location: "required",
+    customer: "required",
+    plannedMonth: "required",
+  });
 
     if (validation.fails()) {
       return res.json({
@@ -146,179 +144,213 @@ router.post(
       });
     }
 
-    const t1 = await invtDB.transaction();
+  const t1 = await invtDB.transaction();
 
-    try {
-      function randomString(length = 10) {
-        var result = "";
-        var characters =
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        var charactersLength = characters.length;
-        for (var i = 0; i < length; i++) {
-          result += characters.charAt(
-            Math.floor(Math.random() * charactersLength)
-          );
-        }
-        return result;
+  try {
+    function randomString(length = 10) {
+      var result = "";
+      var characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var charactersLength = characters.length;
+      for (var i = 0; i < length; i++) {
+        result += characters.charAt(Math.floor(Math.random() * charactersLength));
       }
+      return result;
+    }
 
-      if (req.body.project == "") {
-        return res.json({
-          status: "error",
-          message: "w.e.f 12-Dec-2022, Project ID is mandatory to create PPR",
-          success: false,
-        });
-      }
-      let stmt = await invtDB.query(
-        "SELECT `prod_transaction` FROM `mfg_production_1` GROUP BY `prod_transaction` ORDER BY `ID` DESC LIMIT 1",
+    if (req.body.project == "") {
+      return res.json({
+        status: "error",
+        message:"w.e.f 12-Dec-2022, Project ID is mandatory to create PPR",
+        success: false,
+      });
+    }
+    let stmt = await invtDB.query("SELECT `prod_transaction` FROM `mfg_production_1` GROUP BY `prod_transaction` ORDER BY `ID` DESC LIMIT 1", {
+      type: invtDB.QueryTypes.SELECT,
+    });
+    let transactionCode;
+
+    if (stmt.length > 0) {
+      transactionCode = stmt[0].prod_transaction;
+    } else {
+      transactionCode = "PR001";
+    }
+
+    let stmt_check_product = await invtDB.query("SELECT * FROM products WHERE p_sku = :sku AND is_enabled = 'Y'", {
+      replacements: {
+        sku: req.body.product
+      },
+      type: invtDB.QueryTypes.SELECT
+    });
+
+    if (stmt_check_product.length <= 0) {
+      return res.json({ success: false, message: "SKU not found or disabled", status: "error" });
+    }
+
+    // FG-only guard: for a given project, do not allow new FG (products_type = 'default')
+    // PPR while any FG PPR pending qty exists for that project.
+    const productType = stmt_check_product[0].products_type || "";
+    if (productType === "default") {
+      const fgPendingRows = await invtDB.query(
+        `SELECT 
+           COALESCE(SUM(m.prod_planned_qty), 0) AS total_planned,
+           COALESCE(SUM(m.prod_executed_qty), 0) AS total_executed
+         FROM mfg_production_1 m
+         INNER JOIN products p ON p.p_sku = m.prod_product_sku
+         WHERE m.prod_project = :project
+           AND m.phase1_status = 'A'
+           AND p.products_type = 'default'`,
         {
+          replacements: { project: req.body.project },
           type: invtDB.QueryTypes.SELECT,
+          transaction: t1,
         }
       );
-      let transactionCode;
 
-      if (stmt.length > 0) {
-        transactionCode = stmt[0].prod_transaction;
-      } else {
-        transactionCode = "PR001";
-      }
+      if (fgPendingRows.length > 0) {
+        const plannedFG = helper.number(fgPendingRows[0].total_planned || 0);
+        const executedFG = helper.number(fgPendingRows[0].total_executed || 0);
+        const remainingFG = plannedFG - executedFG;
 
-      let stmt_check_product = await invtDB.query(
-        "SELECT * FROM products WHERE p_sku = :sku AND is_enabled = 'Y'",
-        {
-          replacements: {
-            sku: req.body.product,
-          },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
-
-      if (stmt_check_product.length <= 0) {
-        return res.json({
-          status: "error",
-          success: false,
-          message: "SKU not found or disabled",
-        });
-      }
-
-      if (helper.number(req.body.qty) > 0) {
-        let strings = transactionCode.replace(/[0-9]/g, "");
-        let digits = (
-          parseInt(transactionCode.replace(/[^0-9]/g, "")) + 1
-        ).toString();
-        if (digits.length < 2) digits = ("0" + digits).substr(-2);
-        transactionCode = strings + digits;
-
-        if (req.body.recipe == "" && req.body.recipe == null) {
+        if (remainingFG > 0) {
+          await t1.rollback();
           return res.json({
             success: false,
-            message: "SKU BOM not provided",
             status: "error",
+            message:
+                "FG PPR pending qty exists for this project. Remaining FG qty: " +
+                remainingFG +
+                ". Complete existing FG PPRs before creating a new FG PPR for this project.",
           });
         }
+      }
+    }
 
-        let stmt1 = await invtDB.query(
-          "INSERT INTO `mfg_production_1` (`prod_branch`,`prod_project`,`prod_type`,`prod_comment`,`prod_product_sku`,`prod_bom_subject`,`prod_customer_name`,`prod_planned_qty`,`prod_location`,`prod_due_date`,`prod_inserted_by`,`prod_insert_date`,`prod_transaction`,`ppr_randomcode`,`prod_rqd_status`)VALUES (:branch,:project,:type,:comment,:sku,:subject,:name,:qty,:location,:duedate,:by,:insertdate,:transactionid,:random,:rdqstatus)",
-          {
-            replacements: {
-              branch: req.branch,
-              type: req.body.requesttype,
-              comment: req.body.comment,
-              project: req.body.project,
-              sku: req.body.product,
-              subject: req.body.recipe,
-              name: req.body.customer,
-              qty: req.body.qty,
-              location: req.body.location,
-              duedate: req.body.duedate,
-              by: req.logedINUser,
-              insertdate: moment(new Date())
-                .tz("Asia/Kolkata")
-                .format("YYYY-MM-DD HH:mm:ss"),
-              transactionid: transactionCode,
-              random: randomString(),
-              rdqstatus: "D",
-            },
-            type: invtDB.QueryTypes.INSERT,
-            transaction: t1,
-          }
-        );
+    const plannedMonthVal = String(req.body.plannedMonth != null ? req.body.plannedMonth : "").trim();
+    if (!plannedMonthVal) {
+      t1.rollback();
+      return res.json({ success: false, message:"plannedMonth is required", status: "error" });
+    }
 
-        if (stmt1.length > 0) {
-          if (
-            helper.preg_match(
-              /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
-              req.body.duedate
-            )
-          ) {
-            if (
-              moment(req.body.duedate, "DD-MM-YYYY").diff(
-                moment(new Date(), "DD-MM-YYYY"),
-                "days"
-              ) < 0
-            ) {
-              t1.rollback();
-              return res.json({
-                status: "error",
-                message:
-                  "PPR due date couldn't be less than requesting creating date",
-                success: false,
-              });
-            } else if (
-              moment(req.body.duedate, "DD-MM-YYYY").isSame(moment(), "day")
-            ) {
-              t1.rollback();
-              return res.json({
-                status: "error",
-                message: "PPR due date couldn't be equal to creating date",
-                success: false,
-              });
-            } else {
-              t1.commit();
-              return res.json({
-                status: "success",
-                message:
-                  "PPR created successfully..<br/>TxnID : #" + transactionCode,
-                success: true,
-              });
-            }
-          } else {
+    if (helper.number(req.body.qty) > 0) {
+      let strings = transactionCode.replace(/[0-9]/g, "");
+      let digits = (parseInt(transactionCode.replace(/[^0-9]/g, "")) + 1).toString();
+      if (digits.length < 2) digits = ("0" + digits).substr(-2);
+      transactionCode = strings + digits;
+
+      if (req.body.recipe == "" && req.body.recipe == null) {
+        return res.json({
+          success: false,
+          message: "SKU BOM not provided",
+          status: "error",
+        });
+      }
+
+      let stmt1 = await invtDB.query(
+        "INSERT INTO `mfg_production_1` (`txn_session`,`prod_branch`,`prod_project`,`prod_type`,`prod_comment`,`prod_product_sku`,`prod_bom_subject`,`prod_customer_name`,`prod_planned_qty`,`prod_location`,`prod_due_date`,`prod_planned_month`,`prod_inserted_by`,`prod_insert_date`,`prod_transaction`,`ppr_randomcode`,`prod_rqd_status`)VALUES (:txn_session,:branch,:project,:type,:comment,:sku,:subject,:name,:qty,:location,:duedate,:plannedmonth,:by,:insertdate,:transactionid,:random,:rdqstatus)",
+        {
+          replacements: {
+            txn_session:helper.generateTxnSession(),
+            branch: req.branch,
+            type: req.body.requesttype,
+            comment: req.body.comment,
+            project: req.body.project,
+            sku: req.body.product,
+            subject: req.body.recipe,
+            name: req.body.customer,
+            qty: req.body.qty,
+            location: req.body.location,
+            duedate: req.body.duedate,
+            plannedmonth: plannedMonthVal.slice(0, 32),
+            by: req.logedINUser,
+            insertdate: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+            transactionid: transactionCode,
+            random: randomString(),
+            rdqstatus: "D",
+          },
+          type: invtDB.QueryTypes.INSERT,
+          transaction: t1,
+        }
+      );
+
+      if (stmt1.length > 0) {
+        if (helper.preg_match(/^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/, req.body.duedate)) {
+          if (moment(req.body.duedate, "DD-MM-YYYY").diff(moment(new Date(), "DD-MM-YYYY"), "days") < 0) {
             t1.rollback();
             return res.json({
               status: "error",
-              message:
-                "PPR due date couldn't be other than DD-MM-YYYY OR left blank",
-              success: false,
+              message: "PPR due date couldn't be less than requesting creating date",
+              success: false
+              
+            });
+          } else if (moment(req.body.duedate, "DD-MM-YYYY").isSame(moment(), "day")) {
+            t1.rollback();
+            return res.json({
+              status: "error",
+              message: "PPR due date couldn't be equal to creating date",
+              success:false,
+            });
+          } else {
+            await writePprQtyLog(t1, {
+              ppr_no: transactionCode,
+              project_id: req.body.project,
+              product_sku: req.body.product,
+              ppr_month: plannedMonthVal.slice(0, 32),
+              old_planned_qty: 0,
+              requested_add_qty: helper.number(req.body.qty),
+              new_planned_qty_preview: helper.number(req.body.qty),
+              approved_qty: helper.number(req.body.qty),
+              final_planned_qty: helper.number(req.body.qty),
+              action_type: "CREATE",
+              status: "APPLIED",
+              request_remark: req.body.comment || "--",
+              decision_remark: "Auto applied at create",
+              requested_by: req.logedINUser,
+              requested_at: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+              decided_by: req.logedINUser,
+              decided_at: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+            });
+            t1.commit();
+            return res.json({
+              status: "success",
+              message: "PPR created successfully..<br/>TxnID : #" + transactionCode,
+              success: true,
             });
           }
         } else {
           t1.rollback();
           return res.json({
             status: "error",
-            message:
-              "an error while handling your request (2), contact system administrator..",
+            message: "PPR due date couldn't be other than DD-MM-YYYY OR left blank",
             success: false,
           });
         }
       } else {
         t1.rollback();
         return res.json({
-          message:
-            "an error while executing your request (1), contact system administrator..",
-          success: false,
           status: "error",
+          message: "an error while handling your request (2), contact system administrator..",
+          success: false,
         });
       }
-    } catch (err) {
+    } else {
+      t1.rollback();
       return res.json({
-        status: "error",
         success: false,
-        message: "Internal Error!!! If this condition persists, contact your system administrator",
-        stack: err.stack,
+        message:  "an error while executing your request (1), contact system administrator..",
+        status: "error",
       });
     }
+  } catch (err) {
+    console.log(err);
+    t1.rollback();
+    return res.json({
+      success: false,
+      message:  "Internal Error<br/>If this condition persists, contact your system administrator" ,
+      status: "error",
+      error: err.stack,
+    });
   }
-);
+});
 
 // Fetch PPR data for update
 router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
@@ -3456,52 +3488,116 @@ router.post(
 );
 
 // Fetch All Projects
-router.post("/allProjects", [auth.isAuthorized], async (req, res) => {
+router.post("/allProjects", [auth.isAuthorized],  async (req, res) => {
   try {
+    const bomRecipeTypeLabel = (t) => {
+      if (t === "default") return "FG";
+      if (t === "semi") return "SFG";
+      return t ? String(t) : "—";
+    };
+
     let stmt = await invtDB.query(
       `SELECT 
         pm.project_name, 
         pm.project_status, 
         pm.project_description, 
         pm.project_costcenter,
+        pm.bomsubjectid,
+        pm.projectQty,
         cc.cost_center_name,
         pm.insert_date 
       FROM project_master pm
       LEFT JOIN cost_center cc ON pm.project_costcenter = cc.cost_center_key
-      GROUP BY pm.project_name
       ORDER BY pm.insert_date DESC`,
       { type: invtDB.QueryTypes.SELECT }
     );
 
+    const allBomIds = new Set();
+    for (let i = 0; i < stmt.length; i++) {
+      const csv = (stmt[i].bomsubjectid || "").toString();
+      csv
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x && x !== "--")
+        .forEach((id) => allBomIds.add(id));
+    }
+
+    let bomMetaById = new Map();
+    if (allBomIds.size > 0) {
+      const bomRows = await invtDB.query(
+        `SELECT subject_id, subject_name, bom_recipe_type, bom_product_sku
+         FROM bom_recipe
+         WHERE subject_id IN (:ids)`,
+        {
+          replacements: { ids: [...allBomIds] },
+          type: invtDB.QueryTypes.SELECT,
+        }
+      );
+      for (let j = 0; j < bomRows.length; j++) {
+        bomMetaById.set(String(bomRows[j].subject_id), bomRows[j]);
+      }
+    }
+
     if (stmt.length > 0) {
       data = [];
       for (let i = 0; i < stmt.length; i++) {
+        const bomIds = (stmt[i].bomsubjectid || "")
+          .toString()
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => x && x !== "--");
+
+        const bomSubjectArr = bomIds.map((id) => {
+          const meta = bomMetaById.get(String(id));
+          const type = meta ? meta.bom_recipe_type : null;
+          const label = bomRecipeTypeLabel(type);
+          const name = meta ? meta.subject_name : null;
+          const sku = meta ? meta.bom_product_sku : null;
+          const suffix = sku ? ` (${sku})` : "";
+          return {
+            subject_id: id,
+            subject_name: name,
+            bom_recipe_type: type,
+            bom_type_label: meta ? label : null,
+            display_text: meta
+              ? `[${label}] ${name || id}${suffix}`
+              : `[?] ${id}`,
+          };
+        });
+
         data.push({
           project: stmt[i].project_name,
+          qty: stmt[i].projectQty,
           status: stmt[i].project_status,
           description: stmt[i].project_description,
+          bomSubject: bomSubjectArr,
           // costcenter: stmt[i].project_costcenter,
-          costcenter: stmt[i].cost_center_name || "N/A",
-          insert_dt: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format(
-            "DD-MM-YYYY HH:mm:ss"
-          ),
+          costcenter: { cost_center_key: stmt[i].project_costcenter, cost_center_name: stmt[i].cost_center_name } || 'N/A',
+          
+          insert_dt: moment(stmt[i].insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
         });
       }
-      res.json({
-        status: "success",
-        data: data,
-        success: true,
+      res.json({ 
+        success: true, 
+        status: "success", 
+        data: data 
       });
       return;
     } else {
-      return res.json({
-        success: false,
-        message: "No data found",
-        status: "error",
+      return res.json({ 
+        success:false, 
+        message: "No data found", 
+        status: "error" 
       });
     }
   } catch (err) {
-    return helper.errorResponse(res, err);
+    console.log(err);
+    return res.json({ 
+      success: false, 
+      message: "Internal Error If this condition persists, contact your system administrator" , 
+      status: "error", 
+      error: err.stack 
+    });
   }
 });
 
@@ -3521,39 +3617,115 @@ router.put("/update/project", [auth.isAuthorized], async (req, res) => {
     });
   }
 
+  const t1 = await invtDB.transaction();
+  const t2 = await invtOakterDB.transaction();
   try {
-    let stmt = await invtDB.query(
-      "UPDATE `project_master` SET `project_name` = :project, `project_description` = :description, `project_costcenter` = :costcenter, `projectQty` = :qty, bomsubjectid = :bomSubject, update_by = :update_by, update_dt = :update_dt WHERE `project_name` = :project",
-      {
+    const normalizeBomSubjectIds = (val) => {
+      if (val === null || val === undefined) return "";
+      if (Array.isArray(val)) {
+        return val
+          .flat()
+          .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
+          .filter((v) => v && v !== "--")
+          .join(",");
+      }
+      const s = String(val).trim();
+      if (!s || s === "--") return "";
+      return s
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x && x !== "--")
+        .join(",");
+    };
+    const bomCsv = normalizeBomSubjectIds(req.body.bomSubject);
+    const bomIds = Array.from(new Set(bomCsv ? bomCsv.split(",") : []));
+
+    if (bomIds.length > 2) {
+      await t1.rollback();
+      await t2.rollback();
+      return res.json({
+        success: false,
+        status: "error",
+        message: "At most 2 BOMs allowed (FG and/or SFG)",
+      });
+    }
+
+    if (bomIds.length > 0) {
+      const selectedBomTypes = await invtDB.query(
+        "SELECT subject_id, bom_recipe_type FROM bom_recipe WHERE subject_id IN (:bomIds) AND bom_status = 'ENABLE'",
+        {
+          replacements: { bomIds },
+          type: invtDB.QueryTypes.SELECT,
+        }
+      );
+      if (selectedBomTypes.length !== bomIds.length) {
+        await t1.rollback();
+        await t2.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message:"Invalid or disabled BOM id(s)",
+        });
+      }
+      if (bomIds.length === 2) {
+        const distinctTypes = new Set(
+          selectedBomTypes.map((r) => r.bom_recipe_type)
+        );
+        if (distinctTypes.size === 1) {
+          await t1.rollback();
+          await t2.rollback();
+          return res.json({
+            success: false,
+            status: "error",
+            message:"Cannot add two BOMs of the same type. Use one FG (default) and one SFG (semi), or only one BOM.",
+          });
+        }
+      }
+    }
+
+    const [stmt, stmt2] = await Promise.all([
+      invtDB.query("UPDATE `project_master` SET `project_name` = :project, `project_description` = :description, `project_costcenter` = :costcenter, `projectQty` = :qty, bomsubjectid = :bomSubject, update_by = :update_by, update_dt = :update_dt WHERE `project_name` = :project", {
         replacements: {
           project: req.body.project,
           description: req.body.description,
           costcenter: req.body.costcenter ? req.body.costcenter : null,
           qty: req.body.qty,
-          bomSubject: req.body.bomSubject,
+          bomSubject: bomCsv,
           update_by: req.logedINUser,
           update_dt: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
         },
         type: invtDB.QueryTypes.UPDATE,
-      }
-    );
-    if (stmt.length == 0) {
-      return res.json({
-        success: false,
-        message: "project name not found to update",
-        status: "error",
-      });
+        transaction: t1
+      }),
+      invtOakterDB.query("UPDATE `project_master` SET `project_name` = :project, `project_description` = :description, `project_costcenter` = :costcenter, `projectQty` = :qty, bomsubjectid = :bomSubject, update_by = :update_by, update_dt = :update_dt WHERE `project_name` = :project", {
+        replacements: {
+          project: req.body.project,
+          description: req.body.description,
+          costcenter: req.body.costcenter ? req.body.costcenter : null,
+          qty: req.body.qty,
+          bomSubject: bomCsv,
+          update_by: req.logedINUser,
+          update_dt: moment(new Date()).format("YYYY-MM-DD HH:mm:ss"),
+        },
+        type: invtOakterDB.QueryTypes.UPDATE,
+        transaction: t2
+      })
+    ]);
+    if (stmt.length == 0 || stmt2.length == 0) {
+      await t1.rollback();
+      await t2.rollback();
+      return res.json({ success: false, message: "project name not found to update", status: "error" });
     }
-    return res.json({
-      success: true,
-      status: "success",
-      message: "project name updated successfully",
-    });
+    await t1.commit();
+    await t2.commit();
+    return res.json({ success: true, status: "success", message: "project name updated successfully" });
   } catch (err) {
-    t1.rollback();
-    return helper.errorResponse(res, err);
+    console.log(err);
+    await t1.rollback();
+    await t2.rollback();
+    return res.json({ success: false, message:"Try Again<br/>If this condition persists, contact your system administrator" , status: "error" });
   }
-});
+})
 
 
 // GET ALL BOM COMPONENT FOR VIEW
