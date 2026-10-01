@@ -5,8 +5,17 @@ const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 const { invtDB, otherDB } = require("../../../config/db/connection");
 const multer = require("multer");
+const fs = require("fs");
 const XLSX = require("xlsx");
 const { default: axios } = require("axios");
+
+const safeNumber = (value) => {
+  if (value === null || value === undefined || value === "" || value === "--") {
+    return 0;
+  }
+  const num = Number(value);
+  return isNaN(num) ? 0 : num;
+};
 
 router.post("/pologs", [auth.isAuthorized], async (req, res) => {
   const validation = new Validator(req.body, {
@@ -50,6 +59,7 @@ router.post("/pologs", [auth.isAuthorized], async (req, res) => {
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
+    fs.mkdirSync("./temp", { recursive: true });
     cb(null, "./temp");
   },
   filename: function (req, file, cb) {
@@ -102,10 +112,10 @@ router.post(
         "Exchange Rate",
         "Taxable Value",
         "Foreign Value",
+        "Mis. Amount",
+        "Insurance Amt",
         "Freight Value",
         "Custom Duty",
-        "Total",
-        "Final Rate",
       ];
 
       const worksheet = fileData.Sheets[sheetName];
@@ -169,9 +179,6 @@ router.post(
           "Taxable Value": "required",
           "Foreign Value": "required",
           "Freight Value": "required",
-          "Custom Duty": "required",
-          Total: "required",
-          "Final Rate": "required",
         });
 
         if (valid.fails()) {
@@ -321,10 +328,10 @@ router.post(
           exchange_rate: item["Exchange Rate"],
           taxable_value: item["Taxable Value"],
           foreign_value: item["Foreign Value"],
-          freight_value: item["Freight Value"],
-          custom_duty: item["Custom Duty"],
-          total: item.Total,
-          final_rate: item["Final Rate"],
+          mis_amount: safeNumber(item["Mis. Amount"]),
+          insurance_amt: safeNumber(item["Insurance Amt"]),
+          freight_value: safeNumber(item["Freight Value"]),
+          custom_duty: safeNumber(item["Custom Duty"]),
         });
       }
 
@@ -365,7 +372,6 @@ router.post(
           item: req.body.component[i],
           qty: req.body.qty[i],
           rate: req.body.rate[i],
-          finalRate: req.body.finalRate[i],
           exchangeCurr: req.body.currency,
           customDuty: req.body.customDuty[i],
           freight: req.body.freight[i],
@@ -374,7 +380,6 @@ router.post(
           item: "required",
           qty: "required|not_in:0",
           rate: "required",
-          finalRate: "required",
           exchangeCurr: "required",
           customDuty: "required",
           freight: "required",
@@ -659,8 +664,24 @@ router.post(
                 return;
               }
 
+              const exchangeRate =
+                req.body.currency == "364907247"
+                  ? 1
+                  : safeNumber(req.body.exchange[i]);
+              const misAmount = safeNumber(req.body.misAmount?.[i]);
+              const insuranceAmount = safeNumber(req.body.insuranceAmt?.[i]);
+              const finalRate =
+                (Number(req.body.qty[i]) *
+                  Number(req.body.rate[i]) *
+                  exchangeRate +
+                  safeNumber(req.body.freight[i]) +
+                  safeNumber(req.body.customDuty[i]) +
+                  misAmount +
+                  insuranceAmount) /
+                Number(req.body.qty[i]);
+
               let stmt4 = await invtDB.query(
-                "INSERT INTO  rm_location  (manual_mfg_code,  in_module , in_vendor_addr , in_vendor_branch , company_branch , currency_type , exchange_rate , in_gst_cgst , in_gst_sgst , in_gst_igst , in_hsn_code , vendor_type , components_id , in_po_rate, final_rate , qty, custom_duty, freight_charge , loc_in , any_remark , insert_date , insert_by , in_transaction_id , in_po_transaction_id , in_po_invoice_id, invoice_date , trans_type , in_vendor_name , in_gst_rate , in_gst_type , is_auto_cons , rm_loc_project_id , rm_loc_cost_center, eInv_applicability, ackwlg_irn, qr_status)VALUES (:manual_mfg_code,'IN-PO',:ven_address,:ven_branch,:branch,:currency,:exchange,:cgst,:sgst,:igst,:hsncode,:vendor_type,:component,:po_rate, :final_rate, :qty, :custom_duty, :freight, :location_in, :remark,:insertdate,:insertby,:in_transaction_id,:po_transaction_id,:po_invoice_id, :invoice_date,:in_type,:vendor_name,:gstrate,:gsttype,'N' , :rm_loc_project_id , :rm_loc_cost_center,  :einv_applicability, :ackwlg_irn, :qr_status)",
+                "INSERT INTO  rm_location  (manual_mfg_code,  in_module , in_vendor_addr , in_vendor_branch , company_branch , currency_type , exchange_rate , in_gst_cgst , in_gst_sgst , in_gst_igst , in_hsn_code , vendor_type , components_id , in_po_rate, final_rate , qty, custom_duty, freight_charge , loc_in , any_remark , insert_date , insert_by , in_transaction_id , in_po_transaction_id , in_po_invoice_id, invoice_date , trans_type , in_vendor_name , in_gst_rate , in_gst_type , is_auto_cons , rm_loc_project_id , rm_loc_cost_center, eInv_applicability, ackwlg_irn, qr_status, mis_amount, insurance_amount)VALUES (:manual_mfg_code,'IN-PO',:ven_address,:ven_branch,:branch,:currency,:exchange,:cgst,:sgst,:igst,:hsncode,:vendor_type,:component,:po_rate, :final_rate, :qty, :custom_duty, :freight, :location_in, :remark,:insertdate,:insertby,:in_transaction_id,:po_transaction_id,:po_invoice_id, :invoice_date,:in_type,:vendor_name,:gstrate,:gsttype,'N' , :rm_loc_project_id , :rm_loc_cost_center,  :einv_applicability, :ackwlg_irn, :qr_status, :misAmount, :insuranceAmount)",
                 {
                   replacements: {
                     manual_mfg_code: req.body.manual_mfg_code[i] ?? "--",
@@ -684,7 +705,9 @@ router.post(
                       req.body.currency == "364907247"
                         ? Number(req.body.rate[i])
                         : Number(req.body.rate[i]),
-                    final_rate: req.body.finalRate[i],
+                    misAmount: misAmount,
+                    insuranceAmount: insuranceAmount,
+                    final_rate: finalRate,
                     custom_duty: req.body.customDuty[i],
                     freight: req.body.freight[i],
                     qty: req.body.qty[i],
