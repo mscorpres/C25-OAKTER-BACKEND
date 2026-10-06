@@ -420,6 +420,7 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
               uom: stmt[0].units_name,
               qty: stmt[0].prod_planned_qty,
               duedate: stmt[0].prod_due_date,
+              plannedMonth: stmt[0].prod_planned_month || "",
               section: { id: stmt[0].prod_location, text: stmt[0].loc_name },
               rqd: stmt[0].prod_rqd_status,
               customer: stmt[0].prod_customer_name,

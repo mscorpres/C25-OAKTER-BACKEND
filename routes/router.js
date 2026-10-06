@@ -98,6 +98,7 @@ module.exports = function (app) {
   app.use("/report35", require("./INVENTORY/report/r35"));
   app.use("/report36", require("./INVENTORY/report/r36"));
   app.use("/report37", require("./INVENTORY/report/r37"));
+  app.use("/report39", require("./INVENTORY/report/r39"));
   app.use("/JWReport", require("./INVENTORY/report/jwReport"));
 
   app.use("/dateBook", require("./INVENTORY/report/dateBook"));

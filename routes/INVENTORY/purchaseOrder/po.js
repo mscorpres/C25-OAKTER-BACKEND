@@ -238,6 +238,28 @@ router.post("/pprList", [auth.isAuthorized], async (req, res) => {
   }
 });
 
+
+const PO_QTY_BYPASS_C_PART_PREFIXES = ["PE", "GC", "FA", "RD","AM"];
+const PO_QTY_BYPASS_C_PART_EXACT = [
+  "PW203001A",
+  "P7316",
+  "P7317",
+  "P7318",
+  "P7319",
+  "P7320",
+  "P7324",
+  "P7344",
+  "PP102010A",
+  "PS901003A"
+];
+function componentBypassesPoQtyCaps(cPartNo, cType) {
+  if (String(cType || "").trim().toUpperCase() === "S") return true;
+  if (cPartNo == null || String(cPartNo).trim() === "") return false;
+  const u = String(cPartNo).trim().toUpperCase();
+  if (PO_QTY_BYPASS_C_PART_EXACT.includes(u)) return true;
+  return PO_QTY_BYPASS_C_PART_PREFIXES.some((p) => u.startsWith(p));
+}
+
 //CREATE PURCHASE ORDER
 router.post(
   "/createPO",
@@ -258,7 +280,7 @@ router.post(
 
     if (validation.fails()) {
       res.json({
-        success: false,
+        success:false,
         message: "something you missing in form field to supply",
         data: validation.errors.all(),
         status: "error",
@@ -266,11 +288,15 @@ router.post(
       return;
     }
 
+    // Optional: PO can be created against a PPR (mfg_production_1.prod_transaction)
+    // If provided, we prevent PO qty exceeding PPR remaining planned qty.
+    const pprId = req.body.pprId ?? null;
+
     // Validate shipping details based on ship_type
     if (req.body.ship_type === "saved") {
       if (!req.body.shipaddressid) {
         res.json({
-          success: false,
+          success:false,
           message: "Please select shipping address for saved mode",
           status: "error",
         });
@@ -279,8 +305,8 @@ router.post(
     } else if (req.body.ship_type === "vendor") {
       if (!req.body.ship_vendor || !req.body.ship_vendor_branch) {
         res.json({
-          success: false,
-          message: "Please select shipping vendor and branch for vendor mode",
+          success:false,
+          message:"Please select shipping vendor and branch for vendor mode",
           status: "error",
         });
         return;
@@ -289,8 +315,8 @@ router.post(
       // For manual, no mandatory GST/PAN, but address is required
       if (!req.body.shipaddress || req.body.shipaddress.trim() === "") {
         res.json({
-          success: false,
-          message: "Please provide shipping address for manual entry",
+          success:false,
+          message:"Please provide shipping address for manual entry",
           status: "error",
         });
         return;
@@ -299,8 +325,8 @@ router.post(
 
     if (req.body.pocreatetype == "0") {
       res.json({
-        success: false,
-        message: "Please select PO type",
+        success:false,
+        message:"Please select PO type",
         status: "error",
       });
       return;
@@ -314,8 +340,8 @@ router.post(
         req.body.pocreatetype == ""
       ) {
         res.json({
-          success: false,
-          message: "Please select supplementary PO",
+          success:false,
+          message:"Please select supplementary PO",
           status: "error",
         });
         return;
@@ -329,7 +355,7 @@ router.post(
     let itemLength = req.body.component.length;
     if (itemLength == 0) {
       res.json({
-        success: false,
+        success:false,
         message: "Please add item",
         status: "error",
       });
@@ -344,8 +370,8 @@ router.post(
     let uniqueItemCurrencys = [...new Set(itemCurrencys)];
     if (uniqueItemCurrencys.length > 1) {
       res.json({
-        success: false,
-        message: "Please select same currency",
+        success:false,
+        message:"Please select same currency",
         status: "error",
       });
       return;
@@ -357,9 +383,8 @@ router.post(
 
     if (dubliEle.length > 0) {
       res.json({
-        success: false,
-        message:
-          "You have entered a same component twice of time in a single request",
+        success:false,
+        message:"You have entered a same component twice of time in a single request",
         status: "error",
       });
       return;
@@ -372,7 +397,7 @@ router.post(
     let componentNameMap = {};
     if (componentKeys.length > 0) {
       const componentDetails = await invtDB.query(
-        "SELECT component_key, c_name, c_part_no FROM `components` WHERE component_key IN (:keys)",
+        "SELECT component_key, c_name, c_part_no, c_type FROM `components` WHERE component_key IN (:keys)",
         {
           replacements: { keys: componentKeys },
           type: invtDB.QueryTypes.SELECT,
@@ -383,6 +408,7 @@ router.post(
         componentNameMap[comp.component_key] = {
           name: comp.c_name || "Unknown Component",
           part_no: comp.c_part_no || "",
+          c_type: comp.c_type || "",
         };
       });
     }
@@ -394,12 +420,18 @@ router.post(
       const projectQty = Number(req.body.project_qty[i]) || 0;
       const totalQtyAfterPO = currentPOQty + executedQty;
 
+      const compKeyPre = req.body.component[i];
+      const compInfoPre = componentNameMap[compKeyPre] || {
+        name: compKeyPre,
+        part_no: "",
+      };
+      if (componentBypassesPoQtyCaps(compInfoPre.part_no, compInfoPre.c_type)) {
+        continue;
+      }
+
       if (totalQtyAfterPO > projectQty) {
-        const compKey = req.body.component[i];
-        const compInfo = componentNameMap[compKey] || {
-          name: compKey,
-          part_no: "",
-        };
+        const compKey = compKeyPre;
+        const compInfo = compInfoPre;
         const displayName = compInfo.part_no
           ? `${compInfo.part_no} - ${compInfo.name}`
           : compInfo.name;
@@ -413,24 +445,22 @@ router.post(
           totalAfterPO: totalQtyAfterPO,
           projectQty: projectQty,
           excess: totalQtyAfterPO - projectQty,
-          message: `Row ${
-            i + 1
-          } [${displayName}]: PO Qty (${currentPOQty}) + Executed Qty (${executedQty}) = ${totalQtyAfterPO} exceeds Project Qty (${projectQty}) by ${
-            totalQtyAfterPO - projectQty
-          } units`,
+          message: `Row ${i + 1
+            } [${displayName}]: PO Qty (${currentPOQty}) + Executed Qty (${executedQty}) = ${totalQtyAfterPO} exceeds Project Qty (${projectQty}) by ${totalQtyAfterPO - projectQty
+            } units`,
         });
       }
     }
 
-    if (qtyWarnings.length > 0 && !req.body.confirmQtyExceed) {
+    // Hard guard: if PO qty (current + already executed) exceeds project qty, block PO creation.
+    // This prevents creating PO when project availability is not present.
+    if (qtyWarnings.length > 0) {
       return res.json({
-        success: false,
-        message:
-          "Quantity exceeds project requirement. Please confirm to proceed.",
-        status: "warning",
+        success:false,
+        message:"Quantity exceeds project availability. PO cannot be created.",
+        status: "error",
         data: {
           warnings: qtyWarnings,
-          requiresConfirmation: true,
         },
       });
     }
@@ -448,7 +478,7 @@ router.post(
         {
           item: "required",
           qty: "required|min:1",
-          rate: "required",
+          rate: "required|regex:/^[0-9]+(\.[0-9]+)?$/",
           exchangeCurr: "required",
           gst_rate: "required",
           gst_type: [
@@ -461,32 +491,32 @@ router.post(
 
       if (itemValidation.fails()) {
         res.json({
-          success: false,
-          message: helper.firstErrorValidatorjs(itemValidation),
+          success:false,
+          message: helper.firstErrorValidatorjs(itemValidation) ,
           status: "error",
         });
         return;
       }
 
-      if (
-        !helper.preg_match(
-          /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
-          req.body.duedate[i]
-        ) &&
-        req.body.duedate[i] != ""
-      ) {
-        res.json({
-          success: false,
-          message: "Please select valid due date in DD-MM-YYYY",
-          status: "error",
-        });
-        return;
-      }
+      // if (
+      //   !helper.preg_match(
+      //     /^(0[1-9]|[1-2][0-9]|3[0-1])-(0[1-9]|1[0-2])-[0-9]{4}$/,
+      //     req.body.duedate[i]
+      //   ) &&
+      //   req.body.duedate[i] != ""
+      // ) {
+      //   res.json({
+      //     success:false,
+      //     message: { msg: "Please select valid due date in DD-MM-YYYY" },
+      //     status: "error",
+      //   });
+      //   return;
+      // }
     }
 
     if (req.body.pocostcenter == null) {
       res.json({
-        success: false,
+        success:false,
         message: "supply the PO cost center",
         status: "error",
       });
@@ -510,11 +540,11 @@ router.post(
 
       if (get_transaction_id.length > 0) {
         res.json({
-          success: false,
+          success:false,
           message:
-            "alloting transaction id as [" +
-            new_create_po_no_value +
-            "] for PO has already exist with us, required manual checking or contact to system administrator.",
+              "alloting transaction id as [" +
+              new_create_po_no_value +
+              "] for PO has already exist with us, required manual checking or contact to system administrator.",
           status: "error",
         });
         return;
@@ -530,9 +560,8 @@ router.post(
 
       if (check_billing_address.length <= 0) {
         res.json({
-          success: false,
-          message:
-            "Vendor billing address not found, please add billing address first.",
+          success:false,
+          message: "Vendor billing address not found, please add billing address first.",
           status: "error",
         });
         return;
@@ -548,8 +577,8 @@ router.post(
 
       if (get_vendor_detail.length <= 0) {
         res.json({
-          success: false,
-          message: "Vendor not found, please add vendor first.",
+          success:false,
+          message:"Vendor not found, please add vendor first.",
           status: "error",
         });
         return;
@@ -592,6 +621,80 @@ router.post(
       let pendingRemark = "--";
       let approveArr = [];
 
+      // PPR qty guard:
+      // Prevent PO from exceeding (PPR planned_qty - executed_qty) * BOM(component_qty)
+      // by subtracting already reserved qty from open POs (po_status='A').
+      let bomQtyMap = {};
+      let reservedQtyMap = {};
+      let pprPlannedSkuQty = null;
+      let pprSku = null;
+      if (pprId) {
+        const componentKeys = (req.body.component || []).filter(Boolean);
+        if (componentKeys.length > 0) {
+          const pprRow = await invtDB.query(
+            "SELECT `prod_bom_subject` AS `bom_subject`, `prod_product_sku` AS `sku`, `prod_planned_qty` AS `planned_qty` FROM `mfg_production_1` WHERE `prod_transaction` = :ppr AND `prod_branch` = :branch LIMIT 1",
+            {
+              replacements: { ppr: pprId, branch: req.branch },
+              type: invtDB.QueryTypes.SELECT,
+              transaction: t,
+            }
+          );
+
+          if (pprRow.length === 0) {
+            await t.rollback();
+            return res.json({
+              success:false,
+              status: "error",
+              message:"PPR not found for provided pprId",
+            });
+          }
+
+          pprSku = pprRow[0].sku;
+          pprPlannedSkuQty = helper.number(pprRow[0].planned_qty);
+
+          const bomQtyRows = await invtDB.query(
+            "SELECT `component_id` AS `component_id`, `qty` AS `qty` FROM `bom_quantity` INNER JOIN `bom_recipe` ON `bom_quantity`.`subject_under` = `bom_recipe`.`subject_id` WHERE `bom_quantity`.`subject_under` = :bomSubject AND `bom_recipe`.`bom_status` = 'ENABLE' AND `bom_quantity`.`component_id` IN (:componentIds)",
+            {
+              replacements: { bomSubject: pprRow[0].bom_subject, componentIds: componentKeys },
+              type: invtDB.QueryTypes.SELECT,
+              transaction: t,
+            }
+          );
+          bomQtyRows.forEach((r) => {
+            bomQtyMap[r.component_id] = helper.number(r.qty);
+          });
+
+          const reservedRows = await invtDB.query(
+            "SELECT `po_part_no` AS `part_no`, COALESCE(SUM(`po_order_qty`),0) AS `reserved_qty` FROM `po_purchase_req` WHERE `po_ppr_no` = :ppr AND `po_part_no` IN (:componentIds) AND `po_status` = 'A' AND `po_part_status` = 'ACTIVE' AND `company_branch` = :branch GROUP BY `po_part_no`",
+            {
+              replacements: { ppr: pprId, componentIds: componentKeys, branch: req.branch },
+              type: invtDB.QueryTypes.SELECT,
+              transaction: t,
+            }
+          );
+          reservedRows.forEach((r) => {
+            reservedQtyMap[r.part_no] = helper.number(r.reserved_qty);
+          });
+
+          const releasedRows = await invtDB.query(
+            "SELECT `components_id` AS `part_no`, COALESCE(SUM(`qty` + COALESCE(`other_qty`, 0)), 0) AS `released_qty` FROM `rm_location` WHERE `trans_type` = 'REJECTION' AND `in_module` = 'IN-TRN' AND `rm_ppr_credit_no` = :ppr AND `company_branch` = :branch AND `components_id` IN (:componentIds) GROUP BY `components_id`",
+            {
+              replacements: { ppr: pprId, branch: req.branch, componentIds: componentKeys },
+              type: invtDB.QueryTypes.SELECT,
+              transaction: t,
+            }
+          );
+          releasedRows.forEach((r) => {
+            const part = r.part_no;
+            const poRes = reservedQtyMap[part] ?? 0;
+            reservedQtyMap[part] = Math.max(
+              0,
+              helper.number(poRes) - helper.number(r.released_qty)
+            );
+          });
+        }
+      }
+
       for (let i = 0; i < itemLength; i++) {
         pendingRemark = "--";
         tolerance = ((req.body.rate_cap[i] * 1) / 100).toFixed(2);
@@ -599,11 +702,17 @@ router.post(
         rowDetails = `PO Qty [${req.body.qty[i]}] | PO Rate [${req.body.rate[i]}] | BOM Rate [${req.body.rate_cap[i]}] | TOLERANCE [${tolerance}] | Project Req. QTY [${req.body.project_qty[i]}] | PO Executed [${req.body.exq_po_qty[i]}]`;
         AllDevisations += rowDetails + "\n";
 
+        const bypassPoQtyCap = componentBypassesPoQtyCaps(
+          componentNameMap[req.body.component[i]]?.part_no,
+          componentNameMap[req.body.component[i]]?.c_type
+        );
+        const qtyExceedsProject =
+          !bypassPoQtyCap &&
+          Number(req.body.qty[i]) >
+            Number(req.body.project_qty[i]) - Number(req.body.exq_po_qty[i]);
+
         if (req.body.currency[i] == 364907247) {
-          if (
-            Number(req.body.qty[i]) >
-            Number(req.body.project_qty[i]) - Number(req.body.exq_po_qty[i])
-          ) {
+          if (qtyExceedsProject) {
             approveStatus = "P";
             pendingRemark = rowDetails + "\n: deviation in qty";
           }
@@ -619,17 +728,13 @@ router.post(
           if (
             (minTolerance > req.body.rate[i] ||
               req.body.rate[i] > req.body.rate_cap[i]) &&
-            Number(req.body.qty[i]) >
-              Number(req.body.project_qty[i]) - Number(req.body.exq_po_qty[i])
+            qtyExceedsProject
           ) {
             approveStatus = "P";
             pendingRemark = rowDetails + "\n: deviation in qty and price both";
           }
         } else {
-          if (
-            Number(req.body.qty[i]) >
-            Number(req.body.project_qty[i]) - Number(req.body.exq_po_qty[i])
-          ) {
+          if (qtyExceedsProject) {
             approveStatus = "P";
             pendingRemark = rowDetails + "\n: deviation in qty";
           }
@@ -645,8 +750,7 @@ router.post(
           if (
             (minTolerance > req.body.exchange[i] ||
               req.body.exchange[i] > req.body.rate_cap[i]) &&
-            Number(req.body.qty[i]) >
-              Number(req.body.project_qty[i]) - Number(req.body.exq_po_qty[i])
+            qtyExceedsProject
           ) {
             approveStatus = "P";
             pendingRemark = rowDetails + "\n: deviation in qty and price both";
@@ -655,11 +759,10 @@ router.post(
 
         approveArr.push(approveStatus);
 
-        if (req.body.remark[i].length > 250) {
+        if (req.body.remark[i].length > 500) {
           res.json({
-            success: false,
-            message:
-              "supplied remark are too long!!! maximum character's allowed (250) only",
+            success:false,
+            message:  "supplied remark are too long!!! maximum character's allowed (250) only",
             status: "error",
           });
           return;
@@ -675,8 +778,8 @@ router.post(
 
         if (check_currency.length <= 0) {
           res.json({
-            success: false,
-            message: "currency either inactive or not exist in our records",
+            success:false,
+            message:"currency either inactive or not exist in our records",
             status: "error",
           });
           return;
@@ -693,29 +796,65 @@ router.post(
         if (check_item.length > 0) {
           if (check_item[0].c_is_enabled == "N") {
             res.json({
-              success: false,
-              message: `component partcode ${
-                check_item[0].c_part_no
-              } / ${decode(
-                check_item[0].c_name
-              )} can not be execute bcz it has been disabled for transaction`,
+              success:false,
+              message: `component partcode ${check_item[0].c_part_no} / ${decode(
+                  check_item[0].c_name
+                )} can not be execute bcz it has been disabled for transaction`,
               status: "error",
             });
             return;
           }
         } else {
           res.json({
-            success: false,
-            message: `some component can not be operate bcz of client issue please reload the browser OR contact to developer`,
+            success:false,
+            message:`some component can not be operate bcz of client issue please reload the browser OR contact to developer`,
             status: "error",
           });
           return;
         }
 
+        // Guard: don't allow PO qty to exceed PPR remaining (planned - executed) mapped to this component
+        let pprComponentPlannedQty = null;
+        let pprComponentRemainingAtCreate = null;
+        if (pprId && pprPlannedSkuQty !== null) {
+          const compKey = req.body.component[i];
+          const reqQty = helper.number(req.body.qty[i]);
+          const bomCompQty = bomQtyMap[compKey] ?? 0;
+          if (bomCompQty <= 0) {
+            await t.rollback();
+            return res.json({
+              success:false,
+              status: "error",
+              message: `Component ${compKey} is not mapped in selected PPR BOM`,
+            });
+          }
+          const componentPlannedToPO =
+            helper.number(pprPlannedSkuQty) * helper.number(bomCompQty);
+          const alreadyReserved = reservedQtyMap[compKey] ?? 0;
+          const availableToCreate =
+            helper.number(componentPlannedToPO) - helper.number(alreadyReserved);
+          pprComponentPlannedQty = helper.number(componentPlannedToPO);
+          pprComponentRemainingAtCreate = helper.number(availableToCreate);
+
+          const skipPprQtyCap = componentBypassesPoQtyCaps(
+            check_item[0].c_part_no,
+            check_item[0].c_type
+          );
+          if (!skipPprQtyCap && reqQty > availableToCreate) {
+            await t.rollback();
+            return res.json({
+              success:false,
+              status: "error",
+              message:`PPR qty exceeded for component ${compKey}. Available: ${availableToCreate}, requested: ${reqQty}.`,
+            });
+          }
+        }
+
         let res1 = await invtDB.query(
-          "INSERT INTO `po_purchase_req` (`advance_payment`,`payment_terms_day`,`approval_status`,`status_remark`,`company_branch`,`po_currency`,`po_exchange`,`po_supplementary`,`po_billing_id`,`po_billing_addr`,`po_ship_id`,`po_ship_address`,`po_ship_type`,`po_ship_vendor_branch`,`terms_condition`,`quotation_detail`,`payment_terms`,`po_vendor_type`,`po_vendor_reg_id`,`po_project_name`,`po_comment`,`po_vendor_name`,`po_ven_add_id`,`po_vendor_address`,`po_part_no`,`po_order_qty`,`po_order_rate`,`po_duedate`,`po_remark`, `internal_remark`,`po_insert_date`,`po_insert_by`,`po_full_date`,`po_transaction`,`po_hsncode`,`po_gsttype`,`po_gstrate`,`po_cgst`,`po_sgst`,`po_igst`,`po_pending_qty`,`po_cost_center`, po_raise_by,statusforporequest,ship_partyname, ship_other_pan, ship_other_gstin,isVenMsme) VALUES (:advancepayment,:termsdays,:approveStatus,:status_remark,:branch,:currency,:exchange,:supplementary,:bill_id,:bill_addr,:shipaddressid,:shipaddress,:ship_type,:shipvendorbranch,:termscondition,:quoationdetail,:paymentterms,:vendortype,:vendorid,:project_name,:po_comment,:vendorname,:vendorbranch,:vendoraddress,:part,:qty,:rate,:duedate,:remark, :internal_remark,:insertdate,:by,:fulldate,:transactionid,:hsncode,:gsttype,:gstrate,:cgst,:sgst,:igst,:qty,:cost_center , :po_raise_by, :statusforporequest ,:ship_partyname,:ship_other_pan,:ship_other_gstin,:isVenMsme)",
+          "INSERT INTO `po_purchase_req` (`txn_session`,`advance_payment`,`payment_terms_day`,`approval_status`,`status_remark`,`company_branch`,`po_currency`,`po_exchange`,`po_supplementary`,`po_billing_id`,`po_billing_addr`,`po_ship_id`,`po_ship_address`,`po_ship_type`,`po_ship_vendor_branch`,`terms_condition`,`quotation_detail`,`payment_terms`,`po_vendor_type`,`po_vendor_reg_id`,`po_project_name`,`po_comment`,`po_vendor_name`,`po_ven_add_id`,`po_vendor_address`,`po_part_no`,`po_order_qty`,`po_order_rate`,`po_duedate`,`po_remark`, `internal_remark`,`po_insert_date`,`po_insert_by`,`po_full_date`,`po_transaction`,`po_hsncode`,`po_gsttype`,`po_gstrate`,`po_cgst`,`po_sgst`,`po_igst`,`po_pending_qty`,`po_cost_center`, `po_ppr_no`,`po_ppr_sku`,`po_ppr_component_planned_qty`,`po_ppr_component_remaining_at_create`, po_raise_by,statusforporequest,ship_partyname, ship_other_pan, ship_other_gstin,isVenMsme,po_bom_qty) VALUES (:txn_session,:advancepayment,:termsdays,:approveStatus,:status_remark,:branch,:currency,:exchange,:supplementary,:bill_id,:bill_addr,:shipaddressid,:shipaddress,:ship_type,:shipvendorbranch,:termscondition,:quoationdetail,:paymentterms,:vendortype,:vendorid,:project_name,:po_comment,:vendorname,:vendorbranch,:vendoraddress,:part,:qty,:rate,:duedate,:remark, :internal_remark,:insertdate,:by,:fulldate,:transactionid,:hsncode,:gsttype,:gstrate,:cgst,:sgst,:igst,:qty,:cost_center,:po_ppr_no,:po_ppr_sku,:po_ppr_component_planned_qty,:po_ppr_component_remaining_at_create, :po_raise_by, :statusforporequest ,:ship_partyname,:ship_other_pan,:ship_other_gstin,:isVenMsme, :po_bom_qty)",
           {
             replacements: {
+              txn_session: helper.generateTxnSession(),
               advancepayment: req.body.advancePayment,
               termsdays:
                 req.body.paymenttermsday == "" ? 30 : req.body.paymenttermsday,
@@ -768,35 +907,37 @@ router.post(
               hsncode: req.body.hsncode[i],
               gsttype: req.body.gsttype[i],
               gstrate: req.body.gstrate[i],
-              cgst: `${
-                helper.gstCalculation(
-                  req.body.gstrate[i],
-                  req.body.rate[i] * req.body.qty[i],
-                  req.body.gsttype[i]
-                ).cgst
-              }`,
-              sgst: `${
-                helper.gstCalculation(
-                  req.body.gstrate[i],
-                  req.body.rate[i] * req.body.qty[i],
-                  req.body.gsttype[i]
-                ).sgst
-              }`,
-              igst: `${
-                helper.gstCalculation(
-                  req.body.gstrate[i],
-                  req.body.rate[i] * req.body.qty[i],
-                  req.body.gsttype[i]
-                ).igst
-              }`,
+              cgst: `${helper.gstCalculation(
+                req.body.gstrate[i],
+                req.body.rate[i] * req.body.qty[i],
+                req.body.gsttype[i]
+              ).cgst
+                }`,
+              sgst: `${helper.gstCalculation(
+                req.body.gstrate[i],
+                req.body.rate[i] * req.body.qty[i],
+                req.body.gsttype[i]
+              ).sgst
+                }`,
+              igst: `${helper.gstCalculation(
+                req.body.gstrate[i],
+                req.body.rate[i] * req.body.qty[i],
+                req.body.gsttype[i]
+              ).igst
+                }`,
               qty: req.body.qty[i],
               cost_center: req.body.pocostcenter,
+              po_ppr_no: pprId,
+              po_ppr_sku: pprSku,
+              po_ppr_component_planned_qty: pprComponentPlannedQty,
+              po_ppr_component_remaining_at_create: pprComponentRemainingAtCreate,
               po_raise_by: req.body.po_raise_by ?? "--",
               statusforporequest: "N",
               ship_partyname: shipPartyName,
               ship_other_pan: shipPAN,
               ship_other_gstin: shipGST,
               isVenMsme: isVenMsme,
+              po_bom_qty: req.body.po_bom_qty[i] || "0",
             },
             transaction: t,
             type: invtDB.QueryTypes.INSERT,
@@ -877,9 +1018,9 @@ Click here to view or approve the PO
       } else {
         await t.rollback();
         return res.json({
-          success: false,
+          success:false,
           status: "error",
-          message: `'PO Raise By' user is not assigned to any team for the cost center to raise PO`,
+          message: "'PO Raise By' user is not assigned to any team for the cost center to raise PO",
         });
       }
 
@@ -900,7 +1041,7 @@ Click here to view or approve the PO
           await t.commit();
           helper.sendMail(mail_id, null, mail_subject, mail_body, null);
           res.json({
-            success: true,
+            success:true,
             message:
               "PO created successfully with TXN ID #" + new_create_po_no_value,
             status: "success",
@@ -910,7 +1051,7 @@ Click here to view or approve the PO
         } else {
           await t.rollback();
           res.json({
-            success: false,
+            success:false,
             message: "Please supply the valid supplementary purchase order",
             status: "error",
           });
@@ -920,7 +1061,7 @@ Click here to view or approve the PO
         await t.commit();
         helper.sendMail(mail_id, null, mail_subject, mail_body, null);
         res.json({
-          success: true,
+          success:true,
           message:
             "PO created successfully with TXN ID #" + new_create_po_no_value,
           status: "success",
@@ -929,13 +1070,15 @@ Click here to view or approve the PO
         return;
       }
     } catch (err) {
+      console.log(err);
       await t.rollback();
       res.json({
-        success: false,
+        success:false,
+        message:"Internal Error!!! If this condition persists, contact your system administrator",
         status: "error",
-        message: err.message,
-      })
-      return helper.errorResponse(res, err);
+        error: err.stack,
+      });
+      return;
     }
   }
 );
@@ -1165,6 +1308,7 @@ router.post("/fetchPendingData4PO", [auth.isAuthorized], async (req, res) => {
               status == "REJECTED" ? result[i].po_rej_remark : "NA",
             project_id: result[i].po_project_name ?? "NA",
             project_name: result[i].project_description ?? "NA",
+            ppr_no: result[i].po_ppr_no ?? "NA",
             requested_by: result[i].raise_by ?? "NA",
             approved_by: result[i].approve_by ?? "NA",
           });
@@ -1661,26 +1805,34 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
 
           if (projectBOMResult.length > 0) {
             for (const project of projectBOMResult) {
-              const bomQtyResult = await invtDB.query(
-                `SELECT bq.qty 
-                 FROM bom_quantity bq
-                 INNER JOIN bom_recipe br ON bq.subject_under = br.subject_id
-                 WHERE bq.subject_under = :bom_id 
-                 AND bq.component_id = :component_id
-                 AND br.bom_status = 'ENABLE'`,
-                {
-                  replacements: {
-                    bom_id: project.bomsubjectid,
-                    component_id: component_code,
-                  },
-                  type: invtDB.QueryTypes.SELECT,
-                }
-              );
+              const bomIds = (project.bomsubjectid || "")
+                .toString()
+                .split(",")
+                .map((x) => x.trim())
+                .filter((x) => x && x !== "--");
 
-              if (bomQtyResult.length > 0) {
-                const bomComponentQty = bomQtyResult[0].qty || 0;
-                const projectQty = project.projectQty || 0;
-                projected_qty += projectQty * bomComponentQty;
+              for (const bomId of bomIds) {
+                const bomQtyResult = await invtDB.query(
+                  `SELECT bq.qty 
+                   FROM bom_quantity bq
+                   INNER JOIN bom_recipe br ON bq.subject_under = br.subject_id
+                   WHERE bq.subject_under = :bom_id 
+                   AND bq.component_id = :component_id
+                   AND br.bom_status = 'ENABLE'`,
+                  {
+                    replacements: {
+                      bom_id: bomId,
+                      component_id: component_code,
+                    },
+                    type: invtDB.QueryTypes.SELECT,
+                  }
+                );
+
+                if (bomQtyResult.length > 0) {
+                  const bomComponentQty = bomQtyResult[0].qty || 0;
+                  const projectQty = project.projectQty || 0;
+                  projected_qty += projectQty * bomComponentQty;
+                }
               }
             }
           }
@@ -1691,6 +1843,8 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
              FROM po_purchase_req pr
              INNER JOIN project_master pm ON pr.po_project_name = pm.project_name
              WHERE pr.po_part_no = :component_code
+             AND pr.po_status = 'A'
+             AND pr.po_part_status = 'ACTIVE'
              AND pm.bomsubjectid IS NOT NULL 
              AND pm.bomsubjectid != '' 
              AND pm.bomsubjectid != '--'`,
@@ -1705,11 +1859,10 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
             executed_qty = executedQtyResult[0].total_executed_qty || 0;
           }
 
-          const last_rate_value =
-            await require("../../../helper/utils/avgRate").getLastInwardRate(
-              result2[i].po_part_no,
-              result2[i].po_vendor_reg_id
-            );
+          const last_rate_value = await require("../../../helper/utils/avgRate").getLastInwardRate(
+            result2[i].po_part_no,
+            result2[i].po_vendor_reg_id
+          );
 
           materials.push({
             updateid: result2[i].purchaseUpdateID,
@@ -1741,15 +1894,15 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
             duedate: result2[i].po_duedate,
             gsttype: gsttype,
             taxablevalue: (
-              helper.number(result2[i].po_order_qty) *
-              helper.number(result2[i].po_order_rate)
-            ).toFixed(2),
+              result2[i].po_order_qty *
+              result2[i].po_order_rate
+            ).toString(),
             exchangerate: result2[i].po_exchange,
             exchangetaxablevalue: (
-              helper.number(result2[i].po_order_qty) *
-              helper.number(result2[i].po_order_rate) *
-              helper.number(result2[i].po_exchange)
-            ).toFixed(2),
+              result2[i].po_order_qty *
+              result2[i].po_order_rate *
+              result2[i].po_exchange
+            ).toString(),
             hsncode: result2[i].po_hsncode,
             gstrate: result2[i].po_gstrate,
             cgst: result2[i].po_cgst,
@@ -1758,6 +1911,7 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
             remark: result2[i].po_remark,
             internal_remark: result2[i].internal_remark,
             orderid: result2[i].po_transaction,
+            po_bom_qty: result2[i].po_bom_qty,
           });
           count++;
           if (count == result2.length) {
@@ -1850,6 +2004,7 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
     return helper.errorResponse(res, err);
   }
 });
+
 // UPDATE PURCHASE ORDER
 router.post(
   "/updateData4Update",
@@ -3836,6 +3991,7 @@ router.post("/fetchCompletePO", [auth.isAuthorized], async (req, res) => {
             po_transaction_style: po_style,
             po_comment: item.po_comment,
             po_transaction_code: item.po_transaction,
+            ppr_no: item.po_ppr_no ?? "NA",
             vendor_name: item.ven_name,
             vendor_id: item.po_vendor_reg_id,
             po_reg_date: moment(item.po_full_date, "").format("DD-MM-YYYY"),
@@ -5604,6 +5760,7 @@ router.post("/requested", [auth.isAuthorized], async (req, res) => {
               status == "REJECTED" ? result[i].po_rej_remark : "NA",
             project_id: result[i].po_project_name ?? "NA",
             project_name: result[i].project_description ?? "NA",
+            ppr_no: result[i].po_ppr_no ?? "NA",
             requested_by: result[i].raise_by ?? "NA",
             approved_by: result[i].approve_by ?? "NA",
             leader_email: leader.leader_email || "NA",
