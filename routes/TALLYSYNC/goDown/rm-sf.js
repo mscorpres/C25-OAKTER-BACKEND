@@ -547,7 +547,7 @@ router.get("/stock_journal", async (req, res) => {
       const amount = qty * purchaseRate;
 
       const destinationLocation = "GDWP001_C25";
-      const sourceLocationCode = item.loc_out_name;
+      const sourceLocationCode = "GDRM001_C25";
 
       return {
         voucherNumber: `C25RM2SF${moment(item.insert_date).format("DDMMYY")}`,
