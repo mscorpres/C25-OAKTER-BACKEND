@@ -1507,8 +1507,48 @@ router.post(
         });
       }
 
-      let TransID = await helper.genTransaction("WO_DEL_CHALLAN", transaction);
+    
+      let numberingQuery = await invtDB.query(
+        "SELECT * FROM `ims_numbering` WHERE `for_number` = 'WO_DEL_CHALLAN' FOR UPDATE",
+        {
+          type: invtDB.QueryTypes.SELECT,
+          transaction: transaction, 
+        }
+      );
 
+      let generated_challan_id; 
+
+      if (numberingQuery.length > 0) {
+        let suffix = parseInt(numberingQuery[0].suffix) + 1;
+        let paddedSuffix = suffix.toString().padStart(
+          parseInt(numberingQuery[0].number_length_limit),
+          "0"
+        );
+        
+     
+        let formattedSession = numberingQuery[0].session.replace('-', '');
+
+        // Format: JWRC25/2627/0001
+        generated_challan_id = numberingQuery[0].prefix + "/" + formattedSession + "/" + paddedSuffix;
+      } else {
+        await transaction.rollback(); 
+        return res.json({
+          success: false,
+          message: "Delivery Challan numbering not configured. Please contact administrator.",
+          status: "error",
+        });
+      } 
+
+    
+      await invtDB.query(
+        "UPDATE `ims_numbering` SET `suffix` = `suffix` + 1 WHERE `for_number` = 'WO_DEL_CHALLAN'",
+        {
+          transaction: transaction, // Fixed from 't'
+          type: invtDB.QueryTypes.UPDATE,
+        }
+      );
+
+     
       for (let i = 0; i < req.body.shipment_id.length; i++) {
         let stmt_wo = await invtDB.query(
           "SELECT * FROM `wo_delivery_challan` WHERE `wo_transaction` = :wo_id AND `wo_shipment_id` = :shipment_id",
@@ -1532,7 +1572,7 @@ router.post(
             "UPDATE `wo_delivery_challan` SET `wo_challan_txn_id` = :challan_id , `wo_del_challan_status` = 'CREATED', `wo_remark` = :remark WHERE `wo_transaction` = :wo_id AND `wo_shipment_id` = :shipment",
             {
               replacements: {
-                challan_id: TransID,
+                challan_id: generated_challan_id, 
                 wo_id: req.body.wo_transaction_id[i],
                 shipment: req.body.shipment_id[i],
                 remark: req.body.remark == null ? "--" : req.body.remark,
