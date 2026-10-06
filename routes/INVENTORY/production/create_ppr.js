@@ -125,6 +125,17 @@ router.post("/fetchProductData", [auth.isAuthorized], async (req, res) => {
   }
 });
 
+async function writePprQtyLog(dbTx, payload) {
+  await invtDB.query(
+    "INSERT INTO `mfg_ppr_qty_change_log` (`ppr_no`,`project_id`,`product_sku`,`ppr_month`,`old_planned_qty`,`requested_add_qty`,`new_planned_qty_preview`,`approved_qty`,`final_planned_qty`,`action_type`,`status`,`request_remark`,`decision_remark`,`requested_by`,`requested_at`,`decided_by`,`decided_at`) VALUES (:ppr_no,:project_id,:product_sku,:ppr_month,:old_planned_qty,:requested_add_qty,:new_planned_qty_preview,:approved_qty,:final_planned_qty,:action_type,:status,:request_remark,:decision_remark,:requested_by,:requested_at,:decided_by,:decided_at)",
+    {
+      replacements: payload,
+      type: invtDB.QueryTypes.INSERT,
+      transaction: dbTx,
+    }
+  );
+}
+
 router.post("/createPPR", [auth.isAuthorized, auth.checkDuplicacy_db], async (req, res) => {
   let validation = new Validator(req.body, {
     product: "required",
