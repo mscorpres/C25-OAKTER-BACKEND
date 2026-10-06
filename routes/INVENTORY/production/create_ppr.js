@@ -4375,4 +4375,216 @@ router.post("/updateMissedExecution", async (req, res) => {
   }
 });
 
+
+// Raise PPR planned qty increase request (approval required)
+router.post("/raisePprQtyRequest", [auth.isAuthorized], async (req, res) => {
+  const valid = new Validator(req.body, {
+    ppr_no: "required",
+    add_qty: "required",
+  });
+  if (valid.fails()) {
+    return res.json({ success:false, status: "error", message: helper.firstErrorValidatorjs(valid) });
+  }
+
+  const t = await invtDB.transaction();
+  try {
+    const addQty = helper.number(req.body.add_qty);
+    if (addQty <= 0) {
+      await t.rollback();
+      return res.json({ success:false, status: "error", message:"add_qty must be greater than 0" });
+    }
+
+    const pprRows = await invtDB.query(
+      "SELECT prod_transaction, prod_project, prod_product_sku, prod_planned_month, prod_planned_qty FROM mfg_production_1 WHERE prod_transaction = :ppr AND prod_branch = :branch AND phase1_status = 'A' LIMIT 1",
+      {
+        replacements: { ppr: req.body.ppr_no, branch: req.branch },
+        type: invtDB.QueryTypes.SELECT,
+        transaction: t,
+      }
+    );
+    if (pprRows.length === 0) {
+      await t.rollback();
+      return res.json({ success:false, status: "error", message:"PPR not found or inactive" });
+    }
+    const ppr = pprRows[0];
+    const oldQty = helper.number(ppr.prod_planned_qty);
+
+    await writePprQtyLog(t, {
+      ppr_no: ppr.prod_transaction,
+      project_id: ppr.prod_project,
+      product_sku: ppr.prod_product_sku,
+      ppr_month: ppr.prod_planned_month || "--",
+      old_planned_qty: oldQty,
+      requested_add_qty: addQty,
+      new_planned_qty_preview: helper.number(oldQty + addQty),
+      approved_qty: 0,
+      final_planned_qty: oldQty,
+      action_type: "QTY_INCREASE_REQUEST",
+      status: "PENDING",
+      request_remark: req.body.remark || "--",
+      decision_remark: "--",
+      requested_by: req.logedINUser,
+      requested_at: moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss"),
+      decided_by: "--",
+      decided_at: null,
+    });
+
+    await t.commit();
+    return res.json({ success:true, status: "success", message: "PPR qty increase request submitted" });
+  } catch (err) {
+    await t.rollback();
+    return res.json({ success:false, status: "error", message:"Internal Error!!! If this condition persists, contact your system administrator" , err: err.stack });
+  }
+});
+
+
+// Approve / reject PPR qty request
+router.post("/decidePprQtyRequest", [auth.isAuthorized], async (req, res) => {
+  const valid = new Validator(req.body, {
+    log_id: "required",
+    decision: "required",
+  });
+  if (valid.fails()) {
+    return res.json({ success:false, status: "error", message: helper.firstErrorValidatorjs(valid) });
+  }
+
+  const decision = String(req.body.decision || "").toUpperCase();
+  if (decision !== "APPROVE" && decision !== "REJECT") {
+    return res.json({ success:false, status: "error", message: "decision must be APPROVE or REJECT" });
+  }
+
+  const t = await invtDB.transaction();
+  try {
+    const logRows = await invtDB.query(
+      "SELECT * FROM mfg_ppr_qty_change_log WHERE id = :id LIMIT 1 FOR UPDATE",
+      {
+        replacements: { id: req.body.log_id },
+        type: invtDB.QueryTypes.SELECT,
+        transaction: t,
+      }
+    );
+    if (logRows.length === 0) {
+      await t.rollback();
+      return res.json({ success:false, status: "error", message:"Log request not found" });
+    }
+    const log = logRows[0];
+    if (log.status !== "PENDING") {
+      await t.rollback();
+      return res.json({ success:false, status: "error", message: "Request already decided"});
+    }
+
+    const decidedAt = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+    if (decision === "APPROVE") {
+      const pprRows = await invtDB.query(
+        "SELECT prod_planned_qty FROM mfg_production_1 WHERE prod_transaction = :ppr AND prod_branch = :branch AND phase1_status = 'A' LIMIT 1 FOR UPDATE",
+        {
+          replacements: { ppr: log.ppr_no, branch: req.branch },
+          type: invtDB.QueryTypes.SELECT,
+          transaction: t,
+        }
+      );
+      if (pprRows.length === 0) {
+        await t.rollback();
+        return res.json({ success:false, status: "error", message: "PPR not found or inactive for approval" });
+      }
+      const oldQty = helper.number(pprRows[0].prod_planned_qty);
+      const addQty = helper.number(log.requested_add_qty);
+      const finalQty = helper.number(oldQty + addQty);
+
+      await invtDB.query(
+        "UPDATE mfg_production_1 SET prod_planned_qty = :qty WHERE prod_transaction = :ppr AND prod_branch = :branch",
+        {
+          replacements: { qty: finalQty, ppr: log.ppr_no, branch: req.branch },
+          type: invtDB.QueryTypes.UPDATE,
+          transaction: t,
+        }
+      );
+
+      await invtDB.query(
+        "UPDATE mfg_ppr_qty_change_log SET status = 'APPROVED', approved_qty = :approved_qty, final_planned_qty = :final_planned_qty, decision_remark = :decision_remark, decided_by = :decided_by, decided_at = :decided_at WHERE id = :id",
+        {
+          replacements: {
+            approved_qty: addQty,
+            final_planned_qty: finalQty,
+            decision_remark: req.body.remark || "--",
+            decided_by: req.logedINUser,
+            decided_at: decidedAt,
+            id: req.body.log_id,
+          },
+          type: invtDB.QueryTypes.UPDATE,
+          transaction: t,
+        }
+      );
+    } else {
+      await invtDB.query(
+        "UPDATE mfg_ppr_qty_change_log SET status = 'REJECTED', approved_qty = 0, decision_remark = :decision_remark, decided_by = :decided_by, decided_at = :decided_at WHERE id = :id",
+        {
+          replacements: {
+            decision_remark: req.body.remark || "--",
+            decided_by: req.logedINUser,
+            decided_at: decidedAt,
+            id: req.body.log_id,
+          },
+          type: invtDB.QueryTypes.UPDATE,
+          transaction: t,
+        }
+      );
+    }
+
+    await t.commit();
+    return res.json({ success:true, status: "success", message: `Request ${decision}D successfully` });
+  } catch (err) {
+    await t.rollback();
+    return res.json({ success:false, status: "error", message: "Internal Error!!! If this condition persists, contact your system administrator", err: err.stack });
+  }
+});
+
+// Fetch PPR qty change logs
+router.post("/fetchPprQtyLogs", [auth.isAuthorized], async (req, res) => {
+  try {
+    const where = ["1=1"];
+    const replacements = {};
+    if (req.body.ppr_no) {
+      where.push("ppr_no = :ppr_no");
+      replacements.ppr_no = req.body.ppr_no;
+    }
+    if (req.body.project_id) {
+      where.push("project_id = :project_id");
+      replacements.project_id = req.body.project_id;
+    }
+    if (req.body.status) {
+      where.push("status = :status");
+      replacements.status = String(req.body.status).toUpperCase();
+    }
+    if (req.body.from_date && req.body.to_date) {
+      where.push("DATE(requested_at) BETWEEN :from_date AND :to_date");
+      replacements.from_date = moment(req.body.from_date, "DD-MM-YYYY").format("YYYY-MM-DD");
+      replacements.to_date = moment(req.body.to_date, "DD-MM-YYYY").format("YYYY-MM-DD");
+    }
+
+    const rows = await invtDB.query(
+      `SELECT 
+         l.*,
+         l.requested_by AS requested_by_id,
+         l.decided_by AS decided_by_id,
+         COALESCE(req_user.user_name, l.requested_by) AS requested_by,
+         COALESCE(dec_user.user_name, l.decided_by) AS decided_by
+       FROM mfg_ppr_qty_change_log l
+       LEFT JOIN admin_login req_user ON req_user.CustID = l.requested_by
+       LEFT JOIN admin_login dec_user ON dec_user.CustID = l.decided_by
+       WHERE ${where.join(" AND ")}
+       ORDER BY l.id DESC`,
+      {
+        replacements,
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+
+    return res.json({ success:true, status: "success", data: rows });
+  } catch (err) {
+    return res.json({ success:false, status: "error", message: "Internal Error!!! If this condition persists, contact your system administrator", err: err.stack });
+  }
+});
+
+
 module.exports = router;
