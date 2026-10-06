@@ -3510,7 +3510,12 @@ router.post("/transferRM2REJ", [auth.isAuthorized], async (req, res) => {
 //INSERT SF - REJ
 
 router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
-  const { fromlocation, tolocation, component, qty, comments } = req.body;
+  const { fromlocation, component, qty, rate, comments } = req.body;
+
+  // Normalize tolocation: if sent as an array, take the first element
+  const tolocation = Array.isArray(req.body.tolocation)
+    ? req.body.tolocation[0]
+    : req.body.tolocation;
 
   const validation = new Validator(req.body, {
     fromlocation: "required",
@@ -3530,11 +3535,22 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
     });
   }
 
-  if (component.length !== qty.length) {
+  // Define arrays object to check length matching
+  const arrays = {
+    qty,
+    rate,
+    comments,
+  };
+
+  const invalidLength = Object.entries(arrays).find(
+    ([, value]) => !Array.isArray(value) || value.length !== component.length
+  );
+
+  if (invalidLength) {
     return res.json({
       success: false,
       status: "error",
-      message: "Component, Qty length mismatch",
+      message: `${invalidLength[0]} length mismatch`,
     });
   }
 
@@ -3561,7 +3577,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
     let transactionID;
     const numbering = await invtDB.query(
       "SELECT * FROM ims_numbering WHERE for_number='GODOWN_TRANSFER' FOR UPDATE",
-      { transaction, type: invtDB.QueryTypes.SELECT },
+      { transaction, type: invtDB.QueryTypes.SELECT }
     );
 
     if (numbering.length) {
@@ -3594,11 +3610,9 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
     const rawProject = projectsIdsHasValue
       ? rawProjectsIds
       : (req.body.projectIds ??
-        req.body.project ??
-        req.body.project_name ??
-        req.body.project_id);
-
-    console.log(rawProject, "-----rawProject");
+         req.body.project ??
+         req.body.project_name ??
+         req.body.project_id);
 
     // ── Build per-row project array ─────────────────────────────────────────
     const projectPerComponent = component.map((_, i) => {
@@ -3623,7 +3637,7 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
           replacements: { ppr: transferPprId, branch: req.branch },
           type: invtDB.QueryTypes.SELECT,
           transaction,
-        },
+        }
       );
 
       if (pprChk.length === 0) {
@@ -3640,17 +3654,15 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
       for (let i = 0; i < projectPerComponent.length; i++) {
         const rowProject = projectPerComponent[i];
 
-        // PPR provided but this row has no project — block it
         if (rowProject === "--") {
           await transaction.rollback();
           return res.json({
             code: 500,
             status: "error",
-            message:`Row ${i + 1}: project is mandatory when PPR is provided`,
+            message: `Row ${i + 1}: project is mandatory when PPR is provided`,
           });
         }
 
-        // Row project doesn't match PPR's project — block it
         if (pprProject !== rowProject) {
           await transaction.rollback();
           return res.json({
@@ -3728,17 +3740,17 @@ router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
               transferPprId != null && String(transferPprId).trim() !== ""
                 ? String(transferPprId).trim().slice(0, 64)
                 : "--",
-            rate: req.body.rate[i],
+            rate: rate[i],
           },
           transaction,
-        },
+        }
       );
     }
 
     // ── Increment numbering ─────────────────────────────────────────────────
     await invtDB.query(
       "UPDATE ims_numbering SET suffix = suffix + 1 WHERE for_number='GODOWN_TRANSFER'",
-      { transaction },
+      { transaction }
     );
 
     await transaction.commit();
