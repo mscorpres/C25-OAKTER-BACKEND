@@ -287,6 +287,20 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
       });
     }
 
+    const altPartCheck = await invtDB.query(
+      "SELECT 1 FROM components WHERE c_new_part_no = ?",
+      { replacements: [new_partno], type: invtDB.QueryTypes.SELECT, transaction: tx1 }
+    );
+
+    if (altPartCheck.length > 0) {
+      await Promise.all([tx1.rollback(), tx2.rollback()]);
+      return res.json({
+        status: "error",
+        success: false,
+        message: "Alt Part no already exists",
+      });
+    }
+
     const nameCheck = await invtDB.query(
       "SELECT 1 FROM components WHERE c_name = ?",
       {
