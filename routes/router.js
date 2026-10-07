@@ -2,8 +2,13 @@ module.exports = function (app) {
   // API
   app.use("/tally", require("./TALLYSYNC/tally"));
 
-  // TALLYSYNC
-  app.use("/tallysync/v1/json", require("./TALLYSYNC/sf-cons"));
+  // TALLYSYNC - Routes with GST parameter for branch-specific database routing
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/sf-cons"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/jw-sfgInward"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/rm-sf"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/rm-cons"));
+  app.use("/tallysync/v1/json", require("./TALLYSYNC/vbtBillRecords"));
+  app.use("/tallysync/v1/json/jw/", require("./TALLYSYNC/jobwork/stockJournalTransfe"));
 
   app.use("/api/v1/", require("./INVENTORY/API/retriveMIN"));
   app.use("/version", require("./VERSION/version"));
