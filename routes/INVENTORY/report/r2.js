@@ -47,7 +47,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         });
       }
       stmt = await invtDB.query(
-        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`,po_purchase_req.po_remark, COALESCE(SUM(`po_purchase_req`.`po_inward_qty`),0) `Inward`, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON units.units_id = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_purchase_req`.`po_status` = 'A' AND ( (`po_purchase_req`.`po_status` = 'C' AND `po_purchase_req`.`po_inward_qty` != '0') OR  ( DATE_FORMAT(`po_purchase_req`.`po_full_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2 ) ) GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
+        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`,po_purchase_req.po_bom_qty, po_purchase_req.po_remark, COALESCE(SUM(`po_purchase_req`.`po_inward_qty`),0) `Inward`, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON units.units_id = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_purchase_req`.`po_status` = 'A' AND ( (`po_purchase_req`.`po_status` = 'C' AND `po_purchase_req`.`po_inward_qty` != '0') OR  ( DATE_FORMAT(`po_purchase_req`.`po_full_date`,'%Y-%m-%d') BETWEEN :date1 AND :date2 ) ) GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
         {
           replacements: { date1: fromdate, date2: todate },
           type: invtDB.QueryTypes.SELECT,
@@ -84,6 +84,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
               reg_date: moment(stmt[i].po_full_date).tz("Asia/Kolkata").format("DD-MM-YYYY"),
               reg_by: stmt[i].user_name,
               ordered_qty: stmt[i].po_order_qty,
+              po_bom_qty: stmt[i].po_bom_qty,
               ordered_pending: stmt[i].po_pending_qty,
               ordered_inward: stmt[i].po_inward_qty,
               vendor_name: stmt[i].po_vendor_name,
@@ -93,6 +94,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
               po_rate: stmt[i].po_order_rate,
               po_cost_center: cost_center,
               po_project: stmt[i].po_project_name,
+              ppr_no: stmt[i].po_ppr_no ?? "NA",
               po_status: stmt[i].po_status,
               po_remark: stmt[i].po_remark,
               po_approve_by: stmt[i].approved_by,
@@ -130,7 +132,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         });
       }
       stmt = await invtDB.query(
-        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`,po_purchase_req.po_remark, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON `units`.`units_id` = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_purchase_req`.`po_status` = 'A' AND DATE_FORMAT(`po_purchase_req`.`po_full_date`, '%Y-%m-%d') BETWEEN :date1 AND :date2 GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
+        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`, po_purchase_req.po_bom_qty, po_purchase_req.po_remark, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON `units`.`units_id` = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_purchase_req`.`po_status` = 'A' AND DATE_FORMAT(`po_purchase_req`.`po_full_date`, '%Y-%m-%d') BETWEEN :date1 AND :date2 GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
         {
           replacements: { date1: fromdate, date2: todate },
           type: invtDB.QueryTypes.SELECT,
@@ -166,6 +168,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             reg_date: moment(stmt[i].po_full_date).tz("Asia/Kolkata").format("DD-MM-YYYY"),
             reg_by: stmt[i].user_name,
             ordered_qty: stmt[i].po_order_qty,
+            po_bom_qty: stmt[i].po_bom_qty,
             ordered_pending: stmt[i].po_pending_qty,
             ordered_inward: stmt[i].po_inward_qty,
             vendor_name: stmt[i].po_vendor_name,
@@ -175,6 +178,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             po_rate: stmt[i].po_order_rate,
             po_cost_center: cost_center,
             po_project: stmt[i].po_project_name,
+            ppr_no: stmt[i].po_ppr_no ?? "NA",
             po_status: stmt[i].po_status,
             po_remark: stmt[i].po_remark,
             po_approve_by: stmt[i].approved_by,
@@ -199,7 +203,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       }
     } else if (searchBy == "PROJECT") {
       stmt = await invtDB.query(
-        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`,po_purchase_req.po_remark, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON `units`.`units_id` = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_project_name` = :project_name GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
+        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`, po_purchase_req.po_bom_qty, po_purchase_req.po_remark, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON `units`.`units_id` = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_is_enabled` = 'Y' AND `po_project_name` = :project_name GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
         {
           replacements: { project_name: searchValue },
           type: invtDB.QueryTypes.SELECT,
@@ -235,6 +239,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             reg_date: moment(stmt[i].po_full_date).tz("Asia/Kolkata").format("DD-MM-YYYY"),
             reg_by: stmt[i].user_name,
             ordered_qty: stmt[i].po_order_qty,
+            po_bom_qty: stmt[i].po_bom_qty,
             ordered_pending: stmt[i].po_pending_qty,
             ordered_inward: stmt[i].po_inward_qty,
             vendor_name: stmt[i].po_vendor_name,
@@ -244,6 +249,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             po_rate: stmt[i].po_order_rate,
             po_cost_center: cost_center,
             po_project: stmt[i].po_project_name,
+            ppr_no: stmt[i].po_ppr_no ?? "NA",
             po_status: stmt[i].po_status,
             po_remark: stmt[i].po_remark,
             po_approve_by: stmt[i].approved_by,
@@ -268,7 +274,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       }
     } else if (searchBy == "by") {
       stmt = await invtDB.query(
-        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`,po_purchase_req.po_remark, COALESCE(SUM(`po_purchase_req`.`po_inward_qty`),0) `Inward`, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON units.units_id = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_type` = 'R' AND `components`.`c_is_enabled` = 'Y' AND po_raise_by = :data GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
+        "SELECT *, branches.branch_name, COALESCE(SUM(`po_purchase_req`.`po_order_qty`),0) `totalReq_Qty`, po_purchase_req.po_bom_qty, po_purchase_req.po_remark, COALESCE(SUM(`po_purchase_req`.`po_inward_qty`),0) `Inward`, ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_raise_by ) AS request_by , ( SELECT user_name FROM admin_login WHERE admin_login.CustID = po_purchase_req.po_approve_by ) AS approved_by FROM `po_purchase_req` LEFT JOIN `components` ON `po_purchase_req`.`po_part_no` = `components`.`component_key` LEFT JOIN `units` ON units.units_id = `components`.`c_uom` LEFT JOIN `admin_login` ON `admin_login`.`CustID` = `po_purchase_req`.`po_insert_by` LEFT JOIN `cost_center` ON `po_purchase_req`.`po_cost_center` = `cost_center`.`cost_center_key` LEFT JOIN `branches` ON `branches`.`branch_code` = `po_purchase_req`.`company_branch` WHERE `components`.`c_type` = 'R' AND `components`.`c_is_enabled` = 'Y' AND po_raise_by = :data GROUP BY `po_purchase_req`.`po_part_no`, `po_purchase_req`.`po_transaction` ORDER BY `po_purchase_req`.`ID` DESC",
         {
           replacements: { data: searchValue },
           type: invtDB.QueryTypes.SELECT,
@@ -305,6 +311,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             reg_date: moment(stmt[i].po_full_date).tz("Asia/Kolkata").format("DD-MM-YYYY"),
             reg_by: stmt[i].user_name,
             ordered_qty: stmt[i].po_order_qty,
+            po_bom_qty: stmt[i].po_bom_qty,
             ordered_pending: stmt[i].po_pending_qty,
             ordered_inward: stmt[i].po_inward_qty,
             vendor_name: stmt[i].po_vendor_name,
@@ -314,6 +321,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
             po_rate: stmt[i].po_order_rate,
             po_cost_center: cost_center,
             po_project: stmt[i].po_project_name,
+            ppr_no: stmt[i].po_ppr_no ?? "NA",
             po_approve_by: stmt[i].approved_by,
             po_remark: stmt[i].po_remark,
             po_raise_by: stmt[i].request_by,
@@ -348,5 +356,6 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       return helper.errorResponse(res, error);
   }
 });
+
 
 module.exports = router;

@@ -6,7 +6,7 @@ let { invtDB, refbDB } = require("../../../../config/db/connection");
 const fs = require("fs");
 const xmlFormatter = require("xml-formatter");
 const crypto = require("crypto");
-
+const multer = require("multer");
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 const Validator = require("validatorjs");
@@ -16,6 +16,425 @@ const uniqueFileName = () => {
   const timestamp = Date.now();
   return `${uniqueId}_${timestamp}.xml`;
 };
+
+
+async function functionCheckStockBulk(partCodes, pickLocation) {
+  if (!Array.isArray(partCodes) || partCodes.length === 0) {
+    return {};
+  }
+
+  const components = await invtDB.query(
+    `SELECT 
+        c.component_key,
+        c.c_name,
+        c.c_part_no,
+        u.units_name
+     FROM components c
+     LEFT JOIN units u ON c.c_uom = u.units_id
+     WHERE (c.c_part_no IN (:codes) OR c.component_key IN (:codes))
+       AND c.c_type = 'R'
+       AND c.c_is_enabled = 'Y'`,
+    {
+      replacements: { codes: partCodes },
+      type: invtDB.QueryTypes.SELECT,
+    },
+  );
+
+  const compMap = {};
+  const componentKeys = [];
+  components.forEach((c) => {
+    compMap[c.component_key] = c;
+    componentKeys.push(c.component_key);
+  });
+
+  if (!componentKeys.length) {
+    return {};
+  }
+
+  const stocks = await invtDB.query(
+    `SELECT
+        components_id,
+        COALESCE(SUM(
+          CASE
+            WHEN loc_in = :location
+             AND trans_type IN ('INWARD','ISSUE','JOBWORK','REJECTION','TRANSFER')
+            THEN qty + other_qty ELSE 0 END
+        ),0)
+        -
+        COALESCE(SUM(
+          CASE
+            WHEN loc_out = :location
+             AND trans_type IN ('CONSUMPTION','ISSUE','JOBWORK','REJECTION','TRANSFER')
+            THEN qty + other_qty ELSE 0 END
+        ),0) AS available_qty
+     FROM rm_location
+     WHERE components_id IN (:keys)
+     GROUP BY components_id`,
+    {
+      replacements: {
+        keys: componentKeys,
+        location: pickLocation,
+      },
+      type: invtDB.QueryTypes.SELECT,
+    },
+  );
+
+  const stockMap = {};
+  stocks.forEach((s) => {
+    stockMap[s.components_id] = helper.number(s.available_qty);
+  });
+
+  const result = {};
+  for (const compKey of componentKeys) {
+    const comp = compMap[compKey];
+    if (!comp) continue;
+
+    const avgRate =
+      await require("../../../../helper/utils/avgRate").getWeightedPurchaseRate(
+        compKey,
+        moment().format("YYYY-MM-DD HH:mm:ss"),
+      );
+
+    const stockInfo = {
+      partCode: comp.c_part_no,
+      name: comp.c_name,
+      key: comp.component_key,
+      unit: comp.units_name,
+      available_qty: stockMap[compKey] || 0,
+      avr_rate: avgRate,
+    };
+
+    result[comp.c_part_no] = stockInfo;
+    result[comp.component_key] = stockInfo;
+  }
+
+  return result;
+}
+
+// Use of Multer
+var upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, callBack) => {
+      callBack(null, "./uploads/temp/");
+    },
+    filename: (req, file, callBack) => {
+      callBack(
+        null,
+        file.fieldname + "-" + Date.now() + path.extname(file.originalname),
+      );
+    },
+  }),
+});
+
+// Process CSF FILE
+router.post("/validate/csv", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "CSV file is required",
+      });
+    }
+
+    const { type, pickLocation } = req.query;
+
+    if (type !== "sf-sf" || !pickLocation) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Invalid request parameters",
+      });
+    }
+
+    let rows;
+    try {
+      rows = csvToJson.fieldDelimiter(",").getJsonFromCsv(req.file.path);
+    } catch (csvError) {
+      return res.json({
+        success: false,
+        status: "error",
+        message:
+          "Failed to parse CSV file. Please ensure the file is a valid CSV format.",
+        error: csvError.message,
+      });
+    }
+
+    if (!rows || !Array.isArray(rows) || !rows.length) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "CSV file is empty or invalid",
+      });
+    }
+
+    /* ---------- VALIDATE LOCATION ---------- */
+    let checkLocation;
+    try {
+      checkLocation = await invtDB.query(
+        `SELECT id 
+           FROM location_main 
+           WHERE location_key = :loc 
+             AND loc_status = 'ACTIVE'`,
+        {
+          replacements: { loc: pickLocation },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
+    } catch (dbError) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Database error while validating location",
+        error: process.env.STAGE === "DEV" ? dbError.message : undefined,
+      });
+    }
+
+    if (!checkLocation || !checkLocation.length) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Invalid or inactive location supplied",
+      });
+    }
+
+    const partCodes = [
+      ...new Set(rows.map((r) => r.PART_CODE?.trim()).filter(Boolean)),
+    ];
+
+    if (!partCodes.length) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "PART_CODE column is missing or empty",
+      });
+    }
+
+    const parseProject = (val) => {
+      const v = val?.trim();
+      return !v || v === "--" ? null : v;
+    };
+
+    const projectNames = [
+      ...new Set(rows.map((r) => parseProject(r.PROJECT)).filter(Boolean)),
+    ];
+
+    let comp_stmt = await invtDB.query(
+      `SELECT component_key, c_part_no
+         FROM components
+         WHERE c_part_no IN (:part_codes)`,
+      {
+        replacements: { part_codes: partCodes },
+        type: invtDB.QueryTypes.SELECT,
+      },
+    );
+
+    if (!comp_stmt.length) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "No valid part codes found",
+      });
+    }
+
+    const componentMap = {};
+
+    comp_stmt.forEach((c) => {
+      componentMap[c.c_part_no] = c.component_key;
+    });
+
+    const invalidPartCodes = partCodes.filter((code) => !componentMap[code]);
+    if (invalidPartCodes.length) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: `Invalid PART_CODE(s): ${invalidPartCodes.join(", ")}`,
+      });
+    }
+
+    /* ---------- VALIDATE PROJECTS (only if any row has a project) ---------- */
+    const projectBomMap = {};
+
+    if (projectNames.length) {
+      const project_check = await invtDB.query(
+        `SELECT project_name, project_description, bomsubjectid
+           FROM project_master
+           WHERE project_name IN (:projectNames)`,
+        {
+          replacements: { projectNames },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
+
+      console.log(project_check, "-----project_check");
+
+      project_check.forEach((p) => {
+        projectBomMap[p.project_name] = {
+          bomsubjectids: p.bomsubjectid
+            ?.toString()
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+          project_description: p.project_description,
+          bomSubjectId: p.bomsubjectid,
+        };
+      });
+
+      console.log(projectBomMap, "-----projectBomMap");
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const rowNo = i + 1;
+      const row = rows[i];
+      const partCode = row.PART_CODE?.trim();
+      const projectName = parseProject(row.PROJECT);
+      const componentKey = componentMap[partCode];
+
+      if (!componentKey) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid PART_CODE [${partCode}] at row ${rowNo}`,
+        });
+      }
+
+      // No project on this row — skip BOM check
+      if (!projectName) continue;
+
+      // Project provided but not found in DB
+      const projectData = projectBomMap[projectName];
+      // if (!projectData) {
+      //   return res.json({
+      //     success: false,
+      //     status: "error",
+      //     message: `PROJECT [${projectName}] not found in master at row ${rowNo}`,
+      //   });
+      // }
+
+      const bomSubjectIds = projectData.bomsubjectids;
+      if (!bomSubjectIds || !bomSubjectIds.length) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `No BOM found for PROJECT [${projectData.project_description}] at row ${rowNo}`,
+        });
+      }
+
+      // Check part code exists in project BOM
+      const bomExists = await invtDB.query(
+        `SELECT component_id
+           FROM bom_quantity
+           WHERE subject_under IN (:bomsubjectids)
+           AND component_id = :componentKey
+           LIMIT 1`,
+        {
+          replacements: { bomsubjectids: bomSubjectIds, componentKey },
+          type: invtDB.QueryTypes.SELECT,
+        },
+      );
+
+      if (!bomExists.length) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `PART_CODE [${partCode}] does not exist in BOM ${projectData?.bomSubjectId} of PROJECT [${projectData.project_description}] at row ${rowNo}`,
+        });
+      }
+    }
+
+    let stockMap;
+    try {
+      stockMap = await functionCheckStockBulk(
+        [...new Set(partCodes)],
+        pickLocation,
+      );
+    } catch (stockError) {
+      return res.json({
+        success: false,
+        status: "error",
+        message: "Error while checking stock availability",
+        error: process.env.STAGE === "DEV" ? stockError.message : undefined,
+      });
+    }
+
+    const successData = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const rowNo = i + 1;
+      const row = rows[i];
+
+      if (!row || typeof row !== "object") {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid row data at row ${rowNo}`,
+        });
+      }
+
+      const partCode = row.PART_CODE?.trim();
+      const project = parseProject(row.PROJECT);
+      const transferQty = Number(row.TRANSFER_QTY);
+      const remark = row.REMARK ? String(row.REMARK).trim() : "";
+
+      if (!partCode) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid PART_CODE at row ${rowNo}`,
+        });
+      }
+
+      const stock = stockMap[partCode];
+      if (!stock) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid Part Code [${partCode}] at row ${rowNo}`,
+        });
+      }
+
+      if (!Number.isFinite(transferQty) || transferQty <= 0) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid TRANSFER_QTY for [${partCode}] at row ${rowNo}`,
+        });
+      }
+
+      if (remark.length > 150) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Remark exceeds 150 chars for [${partCode}] at row ${rowNo}`,
+        });
+      }
+
+      successData.push({
+        ...stock,
+        transferQty,
+        project,
+        remark,
+      });
+    }
+
+    return res.json({
+      success: true,
+      status: "success",
+      data: successData,
+    });
+  } catch (err) {
+    console.error("Error in /validate/csv:", err);
+    return res.json({
+      success: false,
+      status: "error",
+      message:
+        "An error occurred while processing the request. Please contact system administrator.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+});
+
+
 //RM - RM AND SF - SF Transactions List
 router.post("/xml_report_rmsf_same", async (req, res) => {
   const searchBy = req.body.wise;
@@ -3091,240 +3510,271 @@ router.post("/transferRM2REJ", [auth.isAuthorized], async (req, res) => {
 //INSERT SF - REJ
 
 router.post("/transferSF2REJ", [auth.isAuthorized], async (req, res) => {
-  // Validate the request body
+  const { fromlocation, component, qty, rate, comments } = req.body;
+
+  // Normalize tolocation: if sent as an array, take the first element
+  const tolocation = Array.isArray(req.body.tolocation)
+    ? req.body.tolocation[0]
+    : req.body.tolocation;
+
   const validation = new Validator(req.body, {
     fromlocation: "required",
+    tolocation: "required",
     component: "required|array",
-    tolocation: "required|array",
     qty: "required|array",
     rate: "required|array",
-    comments: "required|array", // Added validation for comments array
+    comments: "required|array",
   });
 
   if (validation.fails()) {
     return res.json({
-      status: "error",
       success: false,
-      message: "Missing required fields in form.",
+      status: "error",
+      message: "Missing required fields in form",
       data: validation.errors.all(),
     });
   }
 
-  // Validate that all arrays have the same length
-  const componentLength = req.body.component.length;
-  if (
-    req.body.tolocation.length !== componentLength ||
-    req.body.qty.length !== componentLength ||
-    req.body.rate.length !== componentLength ||
-    req.body.comments.length !== componentLength
-  ) {
+  // Define arrays object to check length matching
+  const arrays = {
+    qty,
+    rate,
+    comments,
+  };
+
+  const invalidLength = Object.entries(arrays).find(
+    ([, value]) => !Array.isArray(value) || value.length !== component.length
+  );
+
+  if (invalidLength) {
     return res.json({
-      status: "error",
       success: false,
-      message:
-        "Component, tolocation, qty, rate, and comments arrays must have the same length.",
+      status: "error",
+      message: `${invalidLength[0]} length mismatch`,
     });
   }
 
-  // Check for duplicate components
-  const toFindDuplicates = (arry) =>
-    arry.filter((item, index) => arry.indexOf(item) !== index);
-  const duplicateElements = toFindDuplicates(req.body.component);
-  if (duplicateElements.length > 0) {
+  const duplicate = component.filter((v, i) => component.indexOf(v) !== i);
+  if (duplicate.length) {
     return res.json({
-      status: "error",
       success: false,
-      message: "Duplicate components detected in the request.",
+      status: "error",
+      message: "Duplicate components detected",
     });
   }
 
-  const t = await invtDB.transaction();
-  let errors = []; // Array to collect errors for all components
+  if (fromlocation === tolocation) {
+    return res.json({
+      success: false,
+      status: "error",
+      message: "Pick and drop location cannot be same",
+    });
+  }
+
+  const transaction = await invtDB.transaction();
 
   try {
-    // Generate transaction ID
-    let transactionID = await helper.genTransaction("GODOWN_TRANSFER", t);
+    let transactionID;
+    const numbering = await invtDB.query(
+      "SELECT * FROM ims_numbering WHERE for_number='GODOWN_TRANSFER' FOR UPDATE",
+      { transaction, type: invtDB.QueryTypes.SELECT }
+    );
 
-    let insertDt = moment(new Date()).format("YYYY-MM-DD HH:mm:ss");
+    if (numbering.length) {
+      const n = numbering[0];
+      const next = (helper.number(n.suffix) + 1)
+        .toString()
+        .padStart(helper.number(n.number_length_limit), "0");
+      transactionID = `${n.prefix}/${n.session}/${next}`;
+    } else {
+      const y = new Date().getFullYear().toString().slice(-2);
+      transactionID = `IGA/${y}-${+y + 1}/0001`;
+    }
 
-    // Process each component in the loop
-    for (let i = 0; i < componentLength; i++) {
-      // Validate quantity
-      const qty = helper.number(req.body.qty[i]);
-      if (!qty || qty <= 0) {
-        errors.push({
-          msg: `Quantity should not be less than or equal to zero at row ${i + 1
-            }`,
-        });
-        continue; // Skip to next component
+    const insertDt = moment().format("YYYY-MM-DD HH:mm:ss");
+
+    // ── PPR (optional) ──────────────────────────────────────────────────────
+    const rawPprId = req.body.pprId ?? req.body.ppr_id;
+    const transferPprId =
+      rawPprId != null && String(rawPprId).trim() !== ""
+        ? String(rawPprId).trim().slice(0, 64)
+        : null;
+
+    // ── Project resolution ──────────────────────────────────────────────────
+    const rawProjectsIds = req.body.projectsIds;
+
+    const projectsIdsHasValue =
+      Array.isArray(rawProjectsIds) &&
+      rawProjectsIds.some((p) => p != null && String(p).trim() !== "");
+
+    const rawProject = projectsIdsHasValue
+      ? rawProjectsIds
+      : (req.body.projectIds ??
+         req.body.project ??
+         req.body.project_name ??
+         req.body.project_id);
+
+    // ── Build per-row project array ─────────────────────────────────────────
+    const projectPerComponent = component.map((_, i) => {
+      let val;
+
+      if (Array.isArray(rawProject)) {
+        val = rawProject[i];
+      } else {
+        val = rawProject;
       }
 
-      // Validate tolocation
-      if (!req.body.tolocation[i]) {
-        errors.push({ msg: `Invalid drop location at row ${i + 1}` });
-        continue; // Skip to next component
-      }
+      return val != null && String(val).trim() !== ""
+        ? String(val).trim().slice(0, 255)
+        : "--";
+    });
 
-      // Validate that pick and drop locations are not the same
-      if (req.body.fromlocation === req.body.tolocation[i]) {
-        errors.push({
-          msg: `Pick and drop location cannot be the same at row ${i + 1}`,
-        });
-        continue; // Skip to next component
-      }
-
-      // Validate component
-      const itemValidation = new Validator(
-        { component: req.body.component[i] },
-        { component: "required" }
+    // ── PPR validation ──────────────────────────────────────────────────────
+    if (transferPprId) {
+      const pprChk = await invtDB.query(
+        "SELECT `prod_project` FROM `mfg_production_1` WHERE `prod_transaction` = :ppr AND `prod_branch` = :branch LIMIT 1",
+        {
+          replacements: { ppr: transferPprId, branch: req.branch },
+          type: invtDB.QueryTypes.SELECT,
+          transaction,
+        }
       );
-      if (itemValidation.fails()) {
-        errors.push({ msg: `Invalid component at row ${i + 1}` });
-        continue; // Skip to next component
+
+      if (pprChk.length === 0) {
+        await transaction.rollback();
+        return res.json({
+          code: 500,
+          status: "error",
+          message: "PPR not found for provided pprId / branch",
+        });
       }
 
-      // Use individual comment for each component, default to "--" if empty
-      const comment =
-        req.body.comments[i] && req.body.comments[i].trim() !== ""
-          ? req.body.comments[i]
-          : "--";
+      const pprProject = String(pprChk[0].prod_project || "");
 
-      // Insert into rm_location with individual comment
-      let stmt1 = await invtDB.query(
-        "INSERT INTO `rm_location` (`in_module`,`company_branch`,`trans_type`,`components_id`,`qty`,`loc_in`,`loc_out`,`any_remark`,`insert_date`,`insert_by`,`transfer_transaction_id`, in_po_rate) VALUES ('IN-TRN',:branch,'TRANSFER',:component,:qty,:loc_in,:loc_out,:remark,:insert_date,:insert_by,:transfer_transaction_id, :rate)",
+      for (let i = 0; i < projectPerComponent.length; i++) {
+        const rowProject = projectPerComponent[i];
+
+        if (rowProject === "--") {
+          await transaction.rollback();
+          return res.json({
+            code: 500,
+            status: "error",
+            message: `Row ${i + 1}: project is mandatory when PPR is provided`,
+          });
+        }
+
+        if (pprProject !== rowProject) {
+          await transaction.rollback();
+          return res.json({
+            code: 500,
+            status: "error",
+            message: `Row ${i + 1}: project "${rowProject}" does not match PPR project "${pprProject}"`,
+          });
+        }
+      }
+    }
+
+    // ── Stock validation ────────────────────────────────────────────────────
+    const stockData = await functionCheckStockBulk(component, fromlocation);
+
+    for (let i = 0; i < component.length; i++) {
+      const transferQty = helper.number(qty[i]);
+      const stock = stockData[component[i]];
+
+      if (!stock) {
+        await transaction.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: `You have supplied an invalid Part Code | Row Number : ${i + 1}`,
+        });
+      }
+
+      if (transferQty <= 0) {
+        await transaction.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Invalid quantity at row ${i + 1} for component ${stock.name} (${stock.partCode})`,
+        });
+      }
+
+      if (transferQty > stock.available_qty) {
+        await transaction.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: `Insufficient stock for component ${stock.name} (${stock.partCode}) | Available Qty [${stock.available_qty}]`,
+        });
+      }
+    }
+
+    // ── Insert rows ─────────────────────────────────────────────────────────
+    for (let i = 0; i < component.length; i++) {
+      const lineRemark =
+        comments[i] && comments[i].trim() !== "" ? comments[i] : "--";
+
+      await invtDB.query(
+        `INSERT INTO rm_location
+         (txn_session, in_module, company_branch, trans_type, components_id, qty,
+          loc_in, loc_out, any_remark, insert_date, insert_by,
+          transfer_transaction_id, rm_loc_project_id, rm_ppr_credit_no, in_po_rate)
+         VALUES
+         (:txn_session, 'IN-TRN', :branch, 'REJECTION', :component, :qty,
+          :locIn, :locOut, :remark, :dt, :by,
+          :txn, :rm_loc_project_id, :rm_ppr_credit_no, :rate)`,
         {
           replacements: {
+            txn_session: helper.generateTxnSession(),
             branch: req.branch,
-            component: req.body.component[i],
-            qty: qty,
-            loc_in: req.body.tolocation[i],
-            loc_out: req.body.fromlocation,
-            remark: comment, // Use individual comment
-            insert_date: insertDt,
-            insert_by: req.logedINUser,
-            transfer_transaction_id: transactionID,
-            rate: req.body.rate[i],
+            component: component[i],
+            qty: helper.number(qty[i]),
+            locIn: tolocation,
+            locOut: fromlocation,
+            remark: lineRemark,
+            dt: insertDt,
+            by: req.logedINUser,
+            txn: transactionID,
+            rm_loc_project_id: projectPerComponent[i],
+            rm_ppr_credit_no:
+              transferPprId != null && String(transferPprId).trim() !== ""
+                ? String(transferPprId).trim().slice(0, 64)
+                : "--",
+            rate: rate[i],
           },
-          type: invtDB.QueryTypes.INSERT,
-          transaction: t,
+          transaction,
         }
       );
-
-      if (stmt1.length > 0) {
-        // Validate from location
-        let stmt2 = await invtDB.query(
-          "SELECT * FROM `location_main` WHERE `location_key` = :location AND loc_status = 'ACTIVE'",
-          {
-            replacements: { location: req.body.fromlocation },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-        if (stmt2.length === 0) {
-          errors.push({ msg: `Invalid pick location at row ${i + 1}` });
-          continue;
-        }
-
-        // Validate to location
-        let stmt3 = await invtDB.query(
-          "SELECT * FROM `location_main` WHERE `location_key` = :location AND loc_status = 'ACTIVE'",
-          {
-            replacements: { location: req.body.tolocation[i] },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-        if (stmt3.length === 0) {
-          errors.push({ msg: `Invalid drop location at row ${i + 1}` });
-          continue;
-        }
-
-        // Validate component
-        let stmt4 = await invtDB.query(
-          "SELECT * FROM `components` WHERE `component_key` = :component_key",
-          {
-            replacements: { component_key: req.body.component[i] },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-        if (stmt4.length === 0) {
-          errors.push({ msg: `Invalid component at row ${i + 1}` });
-          continue;
-        }
-
-        if (stmt4[0].c_is_enabled === "N") {
-          errors.push({
-            msg: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
-              }) is disabled for transaction at row ${i + 1}`,
-          });
-          continue;
-        }
-
-        if (stmt4[0].c_type === "S") {
-          errors.push({
-            msg: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
-              }) is a service part at row ${i + 1}`,
-          });
-          continue;
-        }
-
-        // Check inward quantity
-        let stmt5 = await invtDB.query(
-          "SELECT COALESCE(SUM(`qty`+`other_qty`), 0) AS `Inward` FROM `rm_location` WHERE `components_id` = :component AND (`trans_type` = 'INWARD' OR `trans_type` = 'ISSUE' OR `trans_type` = 'JOBWORK' OR `trans_type` = 'REJECTION' OR `trans_type` = 'TRANSFER') AND `loc_in` = :location",
-          {
-            replacements: {
-              component: req.body.component[i],
-              location: req.body.fromlocation,
-            },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-        const inwardAllQty =
-          stmt5.length > 0 ? helper.number(stmt5[0].Inward) : 0;
-
-        // Check outward quantity
-        let stmt6 = await invtDB.query(
-          "SELECT COALESCE(SUM(`qty`+`other_qty`), 0) AS `Outward` FROM `rm_location` WHERE `components_id` = :component AND (`trans_type` = 'CONSUMPTION' OR `trans_type` = 'ISSUE' OR `trans_type` = 'JOBWORK' OR `trans_type` = 'REJECTION' OR `trans_type` = 'TRANSFER') AND `loc_out` = :location",
-          {
-            replacements: {
-              component: req.body.component[i],
-              location: req.body.fromlocation,
-            },
-            type: invtDB.QueryTypes.SELECT,
-          }
-        );
-        const outwardAllQty =
-          stmt6.length > 0 ? helper.number(stmt6[0].Outward) : 0;
-
-        // Validate available quantity
-        if (inwardAllQty - outwardAllQty < qty) {
-          errors.push({
-            msg: `Component part code (${stmt4[0].c_part_no} / ${stmt4[0].c_name
-              }) has insufficient quantity [${inwardAllQty - outwardAllQty
-              }] at location for row ${i + 1}`,
-          });
-          continue;
-        }
-      } else {
-        errors.push({ msg: `Failed to insert component at row ${i + 1}` });
-      }
     }
 
-    // Check if there were any errors
-    if (errors.length > 0) {
-      await t.rollback();
-      return res.json({ status: "error", success: false, message: errors[0].msg });
-    }
+    // ── Increment numbering ─────────────────────────────────────────────────
+    await invtDB.query(
+      "UPDATE ims_numbering SET suffix = suffix + 1 WHERE for_number='GODOWN_TRANSFER'",
+      { transaction }
+    );
 
-    await t.commit();
+    await transaction.commit();
+
     return res.json({
-      status: "success",
       success: true,
-      message: `Godown migration from SF to REJ completed successfully. Transaction ID: #${transactionID}`,
+      status: "success",
+      message: `Godown transfer completed.\nTransaction ID #${transactionID}`,
+      data: { transactionID },
     });
   } catch (err) {
-    await t.rollback();
-    return res.json({ status: "error", success: false, message: "Something went wrong ! Contact the system administrator" });
+    console.error(err);
+    await transaction.rollback();
+    return res.json({
+      success: false,
+      status: "error",
+      message:
+        "An error occurred while processing your request. Please contact system administrator",
+      error: err.message,
+    });
   }
 });
+
+
 
 // SUBMIT TRANSFER REQUEST
 router.post("/requestTransfer", [auth.isAuthorized], async (req, res) => {

@@ -1792,82 +1792,154 @@ router.post("/vendorTerms", [auth.isAuthorized], async (req, res) => {
 router.post("/projectSave", [auth.isAuthorized], async (req, res) => {
   const t1 = await invtDB.transaction();
   const t2 = await invtOakterDB.transaction();
-
   try {
-    // Validation
     const validation = new Validator(req.body, {
       project_name: "required",
       project_id: "required",
     });
     if (validation.fails()) {
+      await t1.rollback();
+      await t2.rollback();
       return res.json({
-        message: validation.errors.errors[0],
-        status: "error",
         success: false,
+        message: validation.errors.all(),
+        status: "error",
       });
     }
 
-    const { project_name, project_id } = helper.trimObjectValueStartEnd(
-      req.body
-    );
-
-    // Check if project name or ID already exists
-    const stmt = await invtDB.query(
-      "SELECT project_name FROM project_master WHERE project_name = :project_name OR project_name = :project_id",
-      {
-        replacements: { project_name, project_id },
-        type: invtDB.QueryTypes.SELECT,
-        transaction: t1,
+    const { project_name, project_id } = req.body;
+    const normalizeBomSubjectIds = (val) => {
+      if (val === null || val === undefined) return "";
+      if (Array.isArray(val)) {
+        return val
+          .flat()
+          .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
+          .filter((v) => v && v !== "--")
+          .join(",");
       }
-    );
-    if (stmt.length > 0) {
-      await Promise.all([t1.rollback(), t2.rollback()]);
+      const s = String(val).trim();
+      if (!s || s === "--") return "";
+      return s
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x && x !== "--")
+        .join(",");
+    };
+    const bomCsv = normalizeBomSubjectIds(req.body.bom);
+    const bomIds = Array.from(new Set(bomCsv ? bomCsv.split(",") : []));
+
+    if (bomIds.length > 2) {
+      await t1.rollback();
+      await t2.rollback();
       return res.json({
-        message:
-          "Another project with the same name OR project ID already exists. Please choose a different name or project ID",
-        status: "error",
         success: false,
+        status: "error",
+        message: "At most 2 BOMs allowed (FG and/or SFG)",
       });
     }
 
-    const insertPayload = {
-      project_name: project_id,
-      project_description: project_name,
-      insert_date: helper.getCurrentDate(),
-      insert_time: helper.getCurrentTime(),
-      insert_by: req.logedINUser,
-    };
+    if (bomIds.length > 0) {
+      const selectedBomTypes = await invtDB.query("SELECT subject_id, bom_recipe_type FROM bom_recipe WHERE subject_id IN (:bomIds) AND bom_status = 'ENABLE'", {
+        replacements: { bomIds },
+        type: invtDB.QueryTypes.SELECT,
+      });
+      if (selectedBomTypes.length !== bomIds.length) {
+        await t1.rollback();
+        await t2.rollback();
+        return res.json({
+          success: false,
+          status: "error",
+          message: "Invalid or disabled BOM id(s)",
+        });
+      }
+      if (bomIds.length === 2) {
+        const distinctTypes = new Set(selectedBomTypes.map((r) => r.bom_recipe_type));
+        if (distinctTypes.size === 1) {
+          await t1.rollback();
+          await t2.rollback();
+          return res.json({
+            success: false,
+            status: "error",
+            message: "Cannot add two BOMs of the same type. Use one FG (default) and one SFG (semi), or only one BOM.",
+          });
+        }
+      }
+    }
 
-    const insertSQL = `
-      INSERT INTO project_master (project_name, project_description, insert_date, insert_time, insert_by)
-      VALUES (:project_name, :project_description, :insert_date, :insert_time, :insert_by)
-    `;
-
-    // Insert into both DBs
-    await Promise.all([
-      invtDB.query(insertSQL, {
-        replacements: insertPayload,
-        type: invtDB.QueryTypes.INSERT,
-        transaction: t1,
+    const [stmt, stmt2] = await Promise.all([
+      invtDB.query("SELECT project_name FROM project_master WHERE project_name = :project_name", {
+        replacements: {
+          project_name: project_name,
+        },
+        type: invtDB.QueryTypes.SELECT,
       }),
-      invtOakterDB.query(insertSQL, {
-        replacements: insertPayload,
-        type: invtOakterDB.QueryTypes.INSERT,
-        transaction: t2,
+      invtOakterDB.query("SELECT project_name FROM project_master WHERE project_name = :project_name", {
+        replacements: {
+          project_name: project_name,
+        },
+        type: invtOakterDB.QueryTypes.SELECT,
       }),
     ]);
-
-    await Promise.all([t1.commit(), t2.commit()]);
-
+    if (stmt.length > 0 || stmt2.length > 0) {
+      await t1.rollback();
+      await t2.rollback();
+      return res.json({
+        success: false,
+        status: "error",
+        message: "another project with the same already exist, Please choose a different name",
+      });
+    }
+    await Promise.all([
+      invtDB.query(
+        "INSERT INTO project_master (project_name, project_description, project_costcenter,	projectQty, bomsubjectid, insert_date, insert_time, insert_by) VALUES (:project_name, :project_description, :costcenter, 	:qty, :bom, :insert_date,:insert_time, :insert_by)",
+        {
+          replacements: {
+            project_name: project_id,
+            project_description: project_name,
+            costcenter: req.body.costcenter ? req.body.costcenter : null,
+            qty: req.body.qty ? req.body.qty : 0,
+            bom: bomCsv,
+            insert_date: helper.getCurrentDate(),
+            insert_time: helper.getCurrentTime(),
+            insert_by: req.logedINUser,
+          },
+          transaction: t1,
+        },
+      ),
+      invtOakterDB.query(
+        "INSERT INTO project_master (project_name, project_description, project_costcenter,	projectQty, bomsubjectid, insert_date, insert_time, insert_by) VALUES (:project_name, :project_description, :costcenter, 	:qty, :bom, :insert_date,:insert_time, :insert_by)",
+        {
+          replacements: {
+            project_name: project_id,
+            project_description: project_name,
+            costcenter: req.body.costcenter ? req.body.costcenter : null,
+            qty: req.body.qty ? req.body.qty : 0,
+            bom: bomCsv,
+            insert_date: helper.getCurrentDate(),
+            insert_time: helper.getCurrentTime(),
+            insert_by: req.logedINUser,
+          },
+          transaction: t2,
+        },
+      ),
+    ]);
+    await t1.commit();
+    await t2.commit();
     return res.json({
-      message: `New project with name "${project_name}" has been created successfully`,
-      status: "success",
       success: true,
+      status: "success",
+      message: `new project with name "${project_name}" is been created successfully`,
     });
   } catch (err) {
-    await Promise.all([t1.rollback(), t2.rollback()]);
     console.log(err);
-    return helper.errorResponse(res, err);
+    await t1.rollback();
+    await t2.rollback();
+    res.json({
+      success: false,
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
+      status: "error",
+    });
+    return;
   }
 });
 
