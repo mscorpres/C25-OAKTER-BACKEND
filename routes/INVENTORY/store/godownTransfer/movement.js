@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
-
+const xlsx = require("xlsx");
 let { invtDB, refbDB } = require("../../../../config/db/connection");
-
+const path = require("path");
 const fs = require("fs");
 const xmlFormatter = require("xml-formatter");
 const crypto = require("crypto");
@@ -10,6 +10,7 @@ const multer = require("multer");
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 const Validator = require("validatorjs");
+let csvToJson = require("convert-csv-to-json");
 
 const uniqueFileName = () => {
   const uniqueId = crypto.randomBytes(8).toString("hex");
@@ -126,20 +127,31 @@ var upload = multer({
   }),
 });
 
-// Process CSF FILE
 router.post("/validate/csv", upload.single("file"), async (req, res) => {
+  // Helper to remove uploaded temp file
+  const cleanupFile = () => {
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {
+        console.error("Failed to delete temp file:", e);
+      }
+    }
+  };
+
   try {
     if (!req.file) {
       return res.json({
         success: false,
         status: "error",
-        message: "CSV file is required",
+        message: "CSV or Excel file is required",
       });
     }
 
     const { type, pickLocation } = req.query;
 
     if (type !== "sf-sf" || !pickLocation) {
+      cleanupFile();
       return res.json({
         success: false,
         status: "error",
@@ -147,26 +159,49 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       });
     }
 
-    let rows;
+    /* ---------- PARSE FILE (CSV OR XLSX) ---------- */
+    let rawRows = [];
+    const ext = path.extname(req.file.originalname).toLowerCase();
+
     try {
-      rows = csvToJson.fieldDelimiter(",").getJsonFromCsv(req.file.path);
-    } catch (csvError) {
+      if (ext === ".xlsx" || ext === ".xls") {
+        const workbook = xlsx.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        rawRows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+      } else {
+        // Fallback or default CSV parser
+        rawRows = csvToJson.fieldDelimiter(",").getJsonFromCsv(req.file.path);
+      }
+    } catch (parseError) {
+      cleanupFile();
       return res.json({
         success: false,
         status: "error",
-        message:
-          "Failed to parse CSV file. Please ensure the file is a valid CSV format.",
-        error: csvError.message,
+        message: "Failed to parse file. Please ensure it is a valid CSV or Excel file.",
+        error: parseError.message,
       });
     }
 
-    if (!rows || !Array.isArray(rows) || !rows.length) {
+    cleanupFile();
+
+    if (!rawRows || !Array.isArray(rawRows) || !rawRows.length) {
       return res.json({
         success: false,
         status: "error",
-        message: "CSV file is empty or invalid",
+        message: "Uploaded file is empty or invalid",
       });
     }
+
+    /* ---------- NORMALIZE HEADERS & ROWS ---------- */
+    // Trims whitespace, removes UTF-8 BOM (\uFEFF), and uppercases keys
+    const rows = rawRows.map((row) => {
+      const cleanRow = {};
+      for (const [key, val] of Object.entries(row)) {
+        const cleanKey = key.replace(/^\uFEFF/, "").trim().toUpperCase();
+        cleanRow[cleanKey] = typeof val === "string" ? val.trim() : val;
+      }
+      return cleanRow;
+    });
 
     /* ---------- VALIDATE LOCATION ---------- */
     let checkLocation;
@@ -174,12 +209,12 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       checkLocation = await invtDB.query(
         `SELECT id 
            FROM location_main 
-           WHERE location_key = :loc 
-             AND loc_status = 'ACTIVE'`,
+          WHERE location_key = :loc 
+            AND loc_status = 'ACTIVE'`,
         {
           replacements: { loc: pickLocation },
           type: invtDB.QueryTypes.SELECT,
-        },
+        }
       );
     } catch (dbError) {
       return res.json({
@@ -198,8 +233,13 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       });
     }
 
+    /* ---------- EXTRACT & VALIDATE PART CODES ---------- */
     const partCodes = [
-      ...new Set(rows.map((r) => r.PART_CODE?.trim()).filter(Boolean)),
+      ...new Set(
+        rows
+          .map((r) => (r.PART_CODE !== undefined && r.PART_CODE !== null ? String(r.PART_CODE).trim() : ""))
+          .filter(Boolean)
+      ),
     ];
 
     if (!partCodes.length) {
@@ -211,7 +251,8 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
     }
 
     const parseProject = (val) => {
-      const v = val?.trim();
+      if (!val) return null;
+      const v = String(val).trim();
       return !v || v === "--" ? null : v;
     };
 
@@ -219,14 +260,15 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       ...new Set(rows.map((r) => parseProject(r.PROJECT)).filter(Boolean)),
     ];
 
-    let comp_stmt = await invtDB.query(
+    /* ---------- VALIDATE COMPONENTS IN DB ---------- */
+    const comp_stmt = await invtDB.query(
       `SELECT component_key, c_part_no
          FROM components
-         WHERE c_part_no IN (:part_codes)`,
+        WHERE c_part_no IN (:part_codes)`,
       {
         replacements: { part_codes: partCodes },
         type: invtDB.QueryTypes.SELECT,
-      },
+      }
     );
 
     if (!comp_stmt.length) {
@@ -238,7 +280,6 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
     }
 
     const componentMap = {};
-
     comp_stmt.forEach((c) => {
       componentMap[c.c_part_no] = c.component_key;
     });
@@ -252,21 +293,19 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       });
     }
 
-    /* ---------- VALIDATE PROJECTS (only if any row has a project) ---------- */
+    /* ---------- VALIDATE PROJECTS & BOM ---------- */
     const projectBomMap = {};
 
     if (projectNames.length) {
       const project_check = await invtDB.query(
         `SELECT project_name, project_description, bomsubjectid
            FROM project_master
-           WHERE project_name IN (:projectNames)`,
+          WHERE project_name IN (:projectNames)`,
         {
           replacements: { projectNames },
           type: invtDB.QueryTypes.SELECT,
-        },
+        }
       );
-
-      console.log(project_check, "-----project_check");
 
       project_check.forEach((p) => {
         projectBomMap[p.project_name] = {
@@ -279,14 +318,12 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
           bomSubjectId: p.bomsubjectid,
         };
       });
-
-      console.log(projectBomMap, "-----projectBomMap");
     }
 
     for (let i = 0; i < rows.length; i++) {
       const rowNo = i + 1;
       const row = rows[i];
-      const partCode = row.PART_CODE?.trim();
+      const partCode = String(row.PART_CODE || "").trim();
       const projectName = parseProject(row.PROJECT);
       const componentKey = componentMap[partCode];
 
@@ -298,39 +335,30 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
         });
       }
 
-      // No project on this row — skip BOM check
       if (!projectName) continue;
 
-      // Project provided but not found in DB
       const projectData = projectBomMap[projectName];
-      // if (!projectData) {
-      //   return res.json({
-      //     success: false,
-      //     status: "error",
-      //     message: `PROJECT [${projectName}] not found in master at row ${rowNo}`,
-      //   });
-      // }
-
-      const bomSubjectIds = projectData.bomsubjectids;
-      if (!bomSubjectIds || !bomSubjectIds.length) {
+      if (!projectData || !projectData.bomsubjectids || !projectData.bomsubjectids.length) {
         return res.json({
           success: false,
           status: "error",
-          message: `No BOM found for PROJECT [${projectData.project_description}] at row ${rowNo}`,
+          message: `No BOM found for PROJECT [${projectData?.project_description || projectName}] at row ${rowNo}`,
         });
       }
 
-      // Check part code exists in project BOM
       const bomExists = await invtDB.query(
         `SELECT component_id
            FROM bom_quantity
-           WHERE subject_under IN (:bomsubjectids)
-           AND component_id = :componentKey
-           LIMIT 1`,
+          WHERE subject_under IN (:bomsubjectids)
+            AND component_id = :componentKey
+          LIMIT 1`,
         {
-          replacements: { bomsubjectids: bomSubjectIds, componentKey },
+          replacements: {
+            bomsubjectids: projectData.bomsubjectids,
+            componentKey,
+          },
           type: invtDB.QueryTypes.SELECT,
-        },
+        }
       );
 
       if (!bomExists.length) {
@@ -342,11 +370,12 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       }
     }
 
+    /* ---------- CHECK STOCK ---------- */
     let stockMap;
     try {
       stockMap = await functionCheckStockBulk(
         [...new Set(partCodes)],
-        pickLocation,
+        pickLocation
       );
     } catch (stockError) {
       return res.json({
@@ -357,21 +386,14 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       });
     }
 
+    /* ---------- COMPILE RESPONSE ---------- */
     const successData = [];
 
     for (let i = 0; i < rows.length; i++) {
       const rowNo = i + 1;
       const row = rows[i];
 
-      if (!row || typeof row !== "object") {
-        return res.json({
-          success: false,
-          status: "error",
-          message: `Invalid row data at row ${rowNo}`,
-        });
-      }
-
-      const partCode = row.PART_CODE?.trim();
+      const partCode = String(row.PART_CODE || "").trim();
       const project = parseProject(row.PROJECT);
       const transferQty = Number(row.TRANSFER_QTY);
       const remark = row.REMARK ? String(row.REMARK).trim() : "";
@@ -423,6 +445,7 @@ router.post("/validate/csv", upload.single("file"), async (req, res) => {
       data: successData,
     });
   } catch (err) {
+    cleanupFile();
     console.error("Error in /validate/csv:", err);
     return res.json({
       success: false,
