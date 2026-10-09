@@ -631,7 +631,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
         TOLOCATION: item.loc_name ?? "--",
         OUTQTY: `${item.qty}`,
         UNIT: item.units_name,
-        OUTRATE: item.in_po_rate,
+        // OUTRATE: item.in_po_rate,
         ISSUEBY: item.user_name,
         TYPE: transaction_mode,
         TRANSACTION: transaction_id,
@@ -642,7 +642,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
     });
 
     return res.json({
-      succes:true,
+      success:true,
       data: result,
       status: "success",
     });
