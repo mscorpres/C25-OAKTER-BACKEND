@@ -473,6 +473,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
         success: false,
       });
     }
+
     const finalResult = await invtDB.query(
       `
       SELECT 
@@ -484,6 +485,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
         loc2.loc_name AS loc_out,
         al.user_name,
         rl.insert_date,
+        rl.in_po_rate,
         rl.trans_type,
         rl.components_id,
         rl.in_vendor_name,
@@ -629,6 +631,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
         TOLOCATION: item.loc_name ?? "--",
         OUTQTY: `${item.qty}`,
         UNIT: item.units_name,
+        OUTRATE: item.in_po_rate,
         ISSUEBY: item.user_name,
         TYPE: transaction_mode,
         TRANSACTION: transaction_id,
@@ -639,7 +642,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
     });
 
     return res.json({
-      success: true,
+      succes:true,
       data: result,
       status: "success",
     });
