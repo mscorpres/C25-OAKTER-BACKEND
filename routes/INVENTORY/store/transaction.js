@@ -642,7 +642,7 @@ router.get("/transactionOut", [auth.isAuthorized], async (req, res) => {
     });
 
     return res.json({
-      succes:true,
+      success:true,
       data: result,
       status: "success",
     });
