@@ -579,7 +579,7 @@ router.post("/insertAp", [auth.isAuthorized], async (req, res) => {
 
         if (Number(stmt_check_os_amm[0].total_ap_os_amm).toFixed(0) == Number(req.body.os_ammount[i]).toFixed(0)) {
 
-          if (req.body.ref_no[i].startsWith("VBT")) {
+          if (req.body.ref_no[i].startsWith("VBT") || req.body.ref_no[i].startsWith("FY/")) {
             let stmt_update = await tallyDB.query("UPDATE `tally_vbt` SET `vbt_ap_status` = 'C' WHERE `vbt_key` = :vbt_key ", {
               replacements: { vbt_key: req.body.ref_no[i] },
               type: tallyDB.QueryTypes.UPDATE,
@@ -596,7 +596,7 @@ router.post("/insertAp", [auth.isAuthorized], async (req, res) => {
           });
         } else if (Number(req.body.os_ammount[i]).toFixed(0) == Number(stmt_total_ven_amm[0].ven_ammount).toFixed(0)) {
 
-          if (req.body.ref_no[i].startsWith("VBT")) {
+          if (req.body.ref_no[i].startsWith("VBT") || req.body.ref_no[i].startsWith("FY/")) {
             let stmt_update = await tallyDB.query("UPDATE `tally_vbt` SET `vbt_ap_status` = 'C' WHERE `vbt_key` = :vbt_key ", {
               replacements: { vbt_key: req.body.ref_no[i] },
               type: tallyDB.QueryTypes.UPDATE,

@@ -189,13 +189,16 @@ router.post("/insertLocation", [auth.isAuthorized], async (req, res) => {
     }
   }
 
-  if (req.logedINUser !== "CRN301718") {
+  const allowedUsers = ["CRN301718", "CRN5981990"];
+
+   if (!allowedUsers.includes(req.logedINUser)) {
     return res.json({
       success:false,
       message: "You are not authorized to add location" ,
       status: "error",
     });
   }
+
 
   try {
     var new_key = new Date().getTime();
@@ -322,13 +325,15 @@ router.post("/location_allotted", auth.isAuthorized, async (req, res) => {
 
       if (insert_stmt.length > 0) {
         return res.json({
-          status: "success",
+          code: 200,
+          // status: "success",
           success: true,
           message: "Added Success...",
         });
       } else {
         return res.json({
-          status: "error",
+          // status: "error",
+          code: 500,
           success: false,
           message: "Something went wrong",
         });

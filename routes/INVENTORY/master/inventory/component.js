@@ -54,7 +54,7 @@ const buildComponentImageS3Key = (filename) => {
 router.get("/", [auth.isAuthorized], async (req, res) => {
   try {
     const result = await invtDB.query(
-      "SELECT c_part_no,c_new_part_no,c_new_part_no,c_name,units_name,component_key , c_attr_category, c_is_enabled as is_enabled FROM components LEFT JOIN units ON units.units_id = components.c_uom WHERE c_type= 'R' ORDER BY components.ID DESC ",
+      "SELECT c_part_no,c_new_part_no,c_new_part_no,c_name,units_name,component_key , c_attr_category, c_is_enabled as is_enabled,all_sub_groups.sub_group_name AS sub_group FROM components LEFT JOIN units ON units.units_id = components.c_uom LEFT JOIN all_sub_groups ON all_sub_groups.sub_group_id = components.c_sub_group WHERE c_type= 'R' ORDER BY components.ID DESC ",
       { type: invtDB.QueryTypes.SELECT }
     );
 
@@ -65,6 +65,7 @@ router.get("/", [auth.isAuthorized], async (req, res) => {
         ).toString("base64");
         result[i].c_attr_category = result[i].c_attr_category ?? "NA";
         result[i].c_new_part_no = result[i].c_new_part_no ?? "NA";
+        result[i].sub_group = result[i].sub_group ?? "NA";
         result[i].is_enabled =
           result[i].is_enabled == "Y"
             ? "YES"
@@ -199,7 +200,7 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
 
     let checkPermission = await invtDB.query(
       `SELECT CustID FROM admin_login 
-       WHERE CustID IN ('CRN9560637','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
+       WHERE CustID IN ('CRN9560637','CRN5981990','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
        AND CustID = :userCustID`,
       {
         replacements: { userCustID: req.logedINUser },
@@ -283,6 +284,20 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
         status: "error",
         success: false,
         message: "Part no already exists",
+      });
+    }
+
+    const altPartCheck = await invtDB.query(
+      "SELECT 1 FROM components WHERE c_new_part_no = ?",
+      { replacements: [new_partno], type: invtDB.QueryTypes.SELECT, transaction: tx1 }
+    );
+
+    if (altPartCheck.length > 0) {
+      await Promise.all([tx1.rollback(), tx2.rollback()]);
+      return res.json({
+        status: "error",
+        success: false,
+        message: "Alt Part no already exists",
       });
     }
 
@@ -2459,7 +2474,7 @@ router.post("/updateAttrCode", [auth.isAuthorized], async (req, res) => {
 router.get("/compMasterReport", [auth.isAuthorized], async (req, res) => {
   try {
     const stmt = await invtDB.query(
-      "SELECT components.* , units.units_name , all_groups.group_name , admin_login.user_name , update_user.user_name as update_user FROM components LEFT JOIN units ON units.units_id = components.c_uom LEFT JOIN all_groups ON all_groups.group_id = components.c_group LEFT JOIN admin_login ON admin_login.CustID = components.inserted_by LEFT JOIN admin_login update_user ON update_user.CustID = components.updated_by WHERE c_type = 'R'",
+      "SELECT components.* , units.units_name , all_groups.group_name , admin_login.user_name ,update_user.user_name as update_user, all_sub_groups.sub_group_name AS sub_group FROM components LEFT JOIN units ON units.units_id = components.c_uom LEFT JOIN all_groups ON all_groups.group_id = components.c_group LEFT JOIN all_sub_groups ON all_sub_groups.sub_group_id = components.c_sub_group LEFT JOIN admin_login ON admin_login.CustID = components.inserted_by LEFT JOIN admin_login update_user ON update_user.CustID = components.updated_by WHERE c_type = 'R'",
       {
         type: invtDB.QueryTypes.SELECT,
       }
@@ -2499,6 +2514,7 @@ router.get("/compMasterReport", [auth.isAuthorized], async (req, res) => {
           "ATTRIBUTE VALUE": stmt[i].attribute_raw,
           "IS ENABLED": stmt[i].c_is_enabled,
           GROUP: stmt[i].group_name,
+          SUBGROUP: stmt[i].sub_group,
           "Min STOCK": stmt[i].c_min_stock,
           "Max STOCK": stmt[i].c_max_stock,
           "Min ORDER QTY": stmt[i].c_min_order_qty,

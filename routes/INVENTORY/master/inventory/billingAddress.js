@@ -3,7 +3,7 @@ const router = express.Router();
 
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
-let { invtDB, invtOakterDB } = require("../../../../config/db/connection");
+let { invtDB } = require("../../../../config/db/connection");
 
 const Validator = require("validatorjs");
 
@@ -85,7 +85,6 @@ router.post("/saveBillingAddress", [auth.isAuthorized], async (req, res) => {
   }
 
   const t1 = await invtDB.transaction();
-  const t2 = await invtOakterDB.transaction(); 
 
   try {
     const payload = {
@@ -108,20 +107,13 @@ router.post("/saveBillingAddress", [auth.isAuthorized], async (req, res) => {
       VALUES (:code, :label, :company, :address, :state, :gstno, :panno, :cin, :insert_by, :insert_date, :for)
     `;
 
-    await Promise.all([
-      invtDB.query(insertSQL, {
-        replacements: payload,
-        transaction: t1,
-        type: invtDB.QueryTypes.INSERT,
-      }),
-      invtOakterDB.query(insertSQL, {
-        replacements: payload,
-        transaction: t2,
-        type: invtOakterDB.QueryTypes.INSERT,
-      }),
-    ]);
+    await invtDB.query(insertSQL, {
+      replacements: payload,
+      transaction: t1,
+      type: invtDB.QueryTypes.INSERT,
+    });
 
-    await Promise.all([t1.commit(), t2.commit()]);
+    await t1.commit();
 
     return res.json({
       status: "success",
@@ -131,8 +123,11 @@ router.post("/saveBillingAddress", [auth.isAuthorized], async (req, res) => {
     });
   } catch (error) {
     if (t1) await t1.rollback();
-    if (t2) await t2.rollback();
-    return helper.errorResponse(res, error);
+    return res.json({
+      status: "error",
+      success: false, 
+      message: error.message,
+    });
   }
 });
 

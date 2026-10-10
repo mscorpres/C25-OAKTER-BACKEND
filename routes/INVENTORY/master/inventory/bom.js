@@ -2053,7 +2053,7 @@ router.post(
         } else {
           return res.json({
             message:
-              "Part code (${row.PARTCODE}) is not valid or disabled for further transaction..",
+              `Part code (${row.PARTCODE}) is not valid or disabled for further transaction..`,
             status: "error",
             success: false,
           });

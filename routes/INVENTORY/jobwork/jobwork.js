@@ -5741,7 +5741,7 @@ router.get(
       const body = [];
 
       for (const c of components) {
-        const [[total_sfg_consump], [total_iss], [total_ret], [total_consump]] =
+        const [[total_sfg_consump], [total_iss], [total_ret], [total_consump],[last_rate]] =
           await Promise.all([
             invtDB.query(
               "SELECT COALESCE(SUM(qty+other_qty), 0) AS total_sfg_consump FROM rm_location WHERE jw_transaction_id = :transaction_id AND components_id = :component_id AND trans_type = 'SFG-CONSUMPTION' AND trans_mode = 'default'",
@@ -5786,6 +5786,14 @@ router.get(
                 type: invtDB.QueryTypes.SELECT,
               },
             ),
+
+            invtDB.query(
+          "SELECT in_po_rate AS last_rate FROM rm_location WHERE jw_transaction_id = :jw_id AND components_id = :component_id AND trans_type = 'JOBWORK' AND trans_mode = 'default' ORDER BY ID DESC LIMIT 1",
+          {
+            replacements: { jw_id: h.jw_jw_transaction, component_id: c.component_key },
+            type: invtDB.QueryTypes.SELECT,
+          },
+        ),
           ]);
 
         const pendingWithJw = helper
@@ -5804,6 +5812,7 @@ router.get(
           partName: c.c_name,
           uom: c.units_name,
           venLocationStock: pendingWithJw,
+          lastRate: last_rate?.last_rate || 0,
         });
       }
 

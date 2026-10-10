@@ -1,0 +1,79 @@
+Email_change:
+  subject: "Email Verification OTP"
+
+  html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+    </head>
+
+    <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;">
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:30px 0;">
+        <tr>
+          <td align="center">
+
+            <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;">
+
+              <tr>
+                <td align="center" style="background:#0d6efd;padding:25px;">
+                  <h2 style="color:#ffffff;margin:0;">
+                    Email Verification
+                  </h2>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding:35px;color:#333333;">
+
+                  <h3 style="margin-top:0;">
+                    Hello,
+                  </h3>
+
+                  <p style="font-size:15px;line-height:24px;">
+                    You have requested to change your email address. Please use the following One-Time Password (OTP) to verify your new email address:
+                  </p>
+
+                  <div style="text-align:center;margin:30px 0;">
+                    <span style="
+                      display:inline-block;
+                      padding:16px 40px;
+                      font-size:34px;
+                      font-weight:bold;
+                      letter-spacing:10px;
+                      color:#0d6efd;
+                      border:2px dashed #0d6efd;
+                      border-radius:8px;
+                      background:#f8fbff;">
+                      {{otp}}
+                    </span>
+                  </div>
+
+                  <p style="font-size:15px;">
+                    This OTP is valid for <strong>3 minutes</strong>.
+                  </p>
+
+                  <hr style="margin:30px 0;border:none;border-top:1px solid #eeeeee;">
+
+                  <p style="font-size:13px;color:#777777;">
+                    If you did not request this verification, please ignore this email.
+                  </p>
+
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="background:#f7f7f7;padding:20px;color:#777777;font-size:12px;">
+                  © MSCorpres. All rights reserved.
+                </td>
+              </tr>
+
+            </table>
+
+          </td>
+        </tr>
+      </table>
+
+    </body>
+    </html>

@@ -1729,7 +1729,7 @@ router.post("/report_sf_rej", [auth.isAuthorized], async (req, res) => {
       const todate = moment(date[1], "DD-MM-YYYY").format("YYYY-MM-DD");
       const durationInMonths = moment(date[1], "DD-MM-YYYY").diff(
         moment(date[0], "DD-MM-YYYY"),
-        "months"
+        "months",
       );
       if (durationInMonths > 3) {
         return res.json({
@@ -1742,7 +1742,7 @@ router.post("/report_sf_rej", [auth.isAuthorized], async (req, res) => {
       }
 
       stmt1 = await invtDB.query(
-        "SELECT *, `rm_location`.`insert_date`, `rm_location`.`insert_by` AS `insertedByPersonName` FROM `rm_location` LEFT JOIN `components` ON `rm_location`.`components_id` = `components`.`component_key` LEFT JOIN `units` ON `components`.`c_uom` = `units`.`units_id` LEFT JOIN `admin_login` ON `rm_location`.`insert_by` = `admin_login`.`CustID` WHERE `components`.`c_type` = 'R' AND `components`.`c_is_enabled` = 'Y' AND DATE_FORMAT(`rm_location`.`insert_date`,'%Y-%m-%d') BETWEEN :datefrom AND :dateto AND `rm_location`.`trans_type` = 'TRANSFER' ORDER BY `components`.`c_name` ASC",
+        "SELECT *, `rm_location`.`insert_date`, `rm_location`.`insert_by` AS `insertedByPersonName` FROM `rm_location` LEFT JOIN `components` ON `rm_location`.`components_id` = `components`.`component_key` LEFT JOIN `units` ON `components`.`c_uom` = `units`.`units_id` LEFT JOIN `admin_login` ON `rm_location`.`insert_by` = `admin_login`.`CustID` WHERE `components`.`c_type` = 'R' AND `components`.`c_is_enabled` = 'Y' AND DATE_FORMAT(`rm_location`.`insert_date`,'%Y-%m-%d') BETWEEN :datefrom AND :dateto AND `rm_location`.`trans_type` IN ('TRANSFER', 'REJECTION') ORDER BY `components`.`c_name` ASC",
         {
           replacements: {
             datefrom: fromdate,
@@ -1790,6 +1790,8 @@ router.post("/report_sf_rej", [auth.isAuthorized], async (req, res) => {
           remark: item.any_remark,
           in_location: loc_in,
           out_location: loc_out,
+          weightedPurchaseRate: item.in_po_rate,
+          weightedTotalCost: helper.number(item.in_po_rate * item.qty),
           qty: helper.number(item.qty) + helper.number(item.other_qty),
           uom: item.units_name,
           transaction: item.transfer_transaction_id,
