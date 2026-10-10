@@ -67,7 +67,7 @@
                     <td style="text-align: left;"><h3>GATE PASS</h3></td>
                     <td style="font-size: 10px; vertical-align: top; text-align: right;">
                         <strong>Riot Labz Private Limited</strong>
-                        <p>A-21, Hosiery Complex, Block A Road,<br>Noida Phase-2,<br>Yakubpur, Noida, (UP) - 201305</p>
+                        <p>C-25, Hosiery Complex,<br>Noida Phase-2,<br>Gautambuddha Nagar, Noida, (UP) - 201305</p>
                     </td>
                 </tr>
             </table>
