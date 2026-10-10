@@ -11,6 +11,51 @@ const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 const Validator = require("validatorjs");
 
+
+async function getFgPickLocationStockQty(sku, productKey, location, branch, transaction = null) {
+  const queryOptions = {
+    replacements: { sku, product_key: productKey, location, branch },
+    type: invtDB.QueryTypes.SELECT,
+  };
+
+  if (transaction) {
+    queryOptions.transaction = transaction;
+  }
+
+  const stockRows = await invtDB.query(
+    `SELECT
+      COALESCE(SUM(
+        CASE
+          WHEN type IN ('IN', 'FGMIN', 'TRANSFER','BRANCHTRANSFER')
+            AND mfg_pro_location_in = :location
+            THEN COALESCE(mfg_approve_in_qty, 0)
+          ELSE 0
+        END
+      ), 0) -
+      COALESCE(SUM(
+        CASE
+          WHEN type = 'OUT'
+            AND fgout_pro_location_out = :location
+            THEN COALESCE(fgout_approve_out_qty, 0)
+          ELSE 0
+        END
+      ), 0) AS available_qty
+    FROM mfg_production_3
+    WHERE fg_status = 'ACTIVE'
+      AND company_branch = :branch
+      AND (
+        (mfg_pro_apr_sku = :sku AND type IN ('IN', 'FGMIN', 'TRANSFER','BRANCHTRANSFER'))
+        OR (fgout_pro_apr_sku = :product_key AND type = 'OUT')
+      )`,
+    queryOptions
+  );
+
+  const availableQty = stockRows.length ? helper.number(stockRows[0].available_qty) : 0;
+  return availableQty < 0 ? 0 : availableQty;
+}
+
+
+
 const uniqueFileName = () => {
   const uniqueId = crypto.randomBytes(8).toString("hex");
   const timestamp = Date.now();
@@ -1190,7 +1235,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     res.json({
-      success: false,
+      code: 500,
       message: "something you missing in form field to supply",
       data: validation.errors.all(),
       status: "error",
@@ -1210,47 +1255,26 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
     console.log("[godownStocksProduct] product fetch stmt0 length:", stmt0.length, "row:", stmt0[0] ? { p_sku: stmt0[0].p_sku, product_key: stmt0[0].product_key, p_name: stmt0[0].p_name } : null);
     if (stmt0.length <= 0) {
       return res.json({
-        success: false,
-        message: "unregistered product found",
+        code: 500,
+        message:"unregistered product found",
         status: "error",
       });
     }
 
-    // STOCK CALCULATION: match fetchSKU_logs (global product stock, r5-style IN-OUT)
-    // DEBIT (OUT) balance: all OUT for this product, any location
-    const debitStmt = await invtDB.query(
-      "SELECT COALESCE(SUM(`fgout_approve_out_qty`),0) AS `DebitBalance` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE'",
-      {
-        replacements: { product_key: req.body.product },
-        type: invtDB.QueryTypes.SELECT,
-      }
+    const pickLocation = req.body.location;
+    const productKey = req.body.product;
+    const productSku = stmt0[0].p_sku;
+    const available_qty = await getFgPickLocationStockQty(
+      productSku,
+      productKey,
+      pickLocation,
+      req.branch
     );
-    let debitBal = 0;
-    if (debitStmt.length > 0) {
-      debitBal = helper.number(debitStmt[0].DebitBalance || 0);
-    }
-
-    // CREDIT (IN) balance: all IN/FGMIN for this SKU, any location
-    const creditStmt = await invtDB.query(
-      "SELECT COALESCE(SUM(`mfg_approve_in_qty`),0) AS `totalQTYin` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN('IN', 'FGMIN') AND `fg_status` = 'ACTIVE'",
-      {
-        replacements: { sku: stmt0[0].p_sku },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
-    let creditBal = 0;
-    if (creditStmt.length > 0) {
-      creditBal = helper.number(creditStmt[0].totalQTYin || 0);
-    }
-
-    const available_qty = helper.number(creditBal - debitBal);
     console.log(
-      "[godownStocksProduct] stock calc (global, fetchSKU_logs style): creditBal - debitBal =",
-      creditBal,
-      "-",
-      debitBal,
-      "= available_qty",
-      available_qty
+      "[godownStocksProduct] stock calc (pick location): available_qty =",
+      available_qty,
+      "location:",
+      pickLocation
     );
 
     if (
@@ -1258,7 +1282,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
       !stmt0[0].units_name
     ) {
       return res.json({
-        success: false,
+        code: 500,
         message: "product can not be transferred bcz seems it is not available in stock yet",
         status: "error",
       });
@@ -1271,20 +1295,20 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
     );
 
     return res.json({
-      success: true,
+      success:true,
       status: "success",
       data: {
         name: stmt0[0].p_name,
         key: stmt0[0].product_key,
         unit: stmt0[0].units_name,
-        available_qty: available_qty < 0 ? 0 : helper.number(available_qty),
+        available_qty: helper.number(available_qty),
         avr_rate: avr_rate,
       },
     });
   } catch (err) {
     return res.json({
       success: false,
-      message: "API Error: contact system administrator",
+      message: "API Error: contact system administrator" ,
       status: "error",
       error: err.stack,
     });
@@ -2616,30 +2640,39 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
 
       const prod = prodRows[0];
 
-      // LOCATION STOCK AT PICK LOCATION (same logic as godownStocksProduct)
-      const inStmt = await invtDB.query(
-        "SELECT COALESCE(SUM(`mfg_approve_in_qty`), 0) AS `Inward` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN ('IN', 'FGMIN') AND `fg_status` = 'ACTIVE' AND `mfg_pro_location_in` = :location",
-        {
-          replacements: { sku: prod.p_sku, location: pickLocation },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t,
-        }
+      // // LOCATION STOCK AT PICK LOCATION (same logic as godownStocksProduct)
+      // const inStmt = await invtDB.query(
+      //   "SELECT COALESCE(SUM(`mfg_approve_in_qty`), 0) AS `Inward` FROM `mfg_production_3` WHERE `mfg_pro_apr_sku` = :sku AND `type` IN ('IN', 'FGMIN') AND `fg_status` = 'ACTIVE' AND `mfg_pro_location_in` = :location",
+      //   {
+      //     replacements: { sku: prod.p_sku, location: pickLocation },
+      //     type: invtDB.QueryTypes.SELECT,
+      //     transaction: t,
+      //   }
+      // );
+
+      // const outStmt = await invtDB.query(
+      //   "SELECT COALESCE(SUM(`fgout_approve_out_qty`), 0) AS `Outward` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE' AND `fgout_pro_location_out` = :location",
+      //   {
+      //     replacements: { product_key: product[i], location: pickLocation },
+      //     type: invtDB.QueryTypes.SELECT,
+      //     transaction: t,
+      //   }
+      // );
+
+      // const inward = inStmt.length ? helper.number(inStmt[0].Inward) : 0;
+      // const outward = outStmt.length ? helper.number(outStmt[0].Outward) : 0;
+      // const availableQty = inward - outward;
+
+      const availableQty = await getFgPickLocationStockQty(
+        prod.p_sku,
+        product[i],
+        pickLocation,
+        fromBranch,
+        t
       );
 
-      const outStmt = await invtDB.query(
-        "SELECT COALESCE(SUM(`fgout_approve_out_qty`), 0) AS `Outward` FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :product_key AND `type` = 'OUT' AND `fg_status` = 'ACTIVE' AND `fgout_pro_location_out` = :location",
-        {
-          replacements: { product_key: product[i], location: pickLocation },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t,
-        }
-      );
 
-      const inward = inStmt.length ? helper.number(inStmt[0].Inward) : 0;
-      const outward = outStmt.length ? helper.number(outStmt[0].Outward) : 0;
-      const availableQty = inward - outward;
-
-      if (transferQty > availableQty) {
+       if (transferQty > availableQty) {
         await t.rollback();
         return res.json({
           success: false,
@@ -2647,6 +2680,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
           message: `Insufficient FG stock for product ${prod.p_name} (${prod.p_sku}) at pick location. Current Stock [${availableQty}]`,
         });
       }
+
 
       // Weighted rate at this moment (for IN entry)
       let fgRate = 0;
@@ -2658,11 +2692,13 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
 
       // OUT from pick location (mfg_production_3 + fg_location) - fg_out_type kept neutral ('--') for pure transfer
       const outInsert = await invtDB.query(
-        "INSERT INTO `mfg_production_3` (`company_branch`,`fgout_pro_apr_sku`,`fgout_approve_out_qty`,`fgout_pro_apr_by`,`fgout_pro_apr_date`,`fgout_pro_apr_fulldate`, `fgout_pro_location_out`,`mfg_pro_FGout_transaction`,`type`,`fg_out_type`,`fg_out_remark`)VALUES (:branch,:sku,:aproutqty,:outby,:outdate,:outfulldate, :fgout_pro_location_out,:transactioncode,:type, :fg_out_type,:remark)",
+        "INSERT INTO `mfg_production_3` (`txn_session`,`company_branch`,`fgout_pro_apr_sku`,`fgout_approve_out_qty`,`fgout_pro_apr_by`,`fgout_pro_apr_date`,`fgout_pro_apr_fulldate`, `fgout_pro_location_out`,`mfg_pro_FGout_transaction`,`type`,`fg_out_type`,`fg_out_remark`,`mfg_pro_apr_bom`,`in_fg_rate`)VALUES (:txn_session,:branch,:sku,:aproutqty,:outby,:outdate,:outfulldate, :fgout_pro_location_out,:transactioncode,:type, :fg_out_type,:remark,:bom,:rate)",
         {
           replacements: {
+            txn_session: helper.generateTxnSession(),
             branch: fromBranch,
             sku: product[i],
+            bom: req.body.bom,
             aproutqty: transferQty,
             outby: req.logedINUser,
             outdate: nowDate,
@@ -2672,6 +2708,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
             type: "OUT",
             fg_out_type: "--",
             remark: lineRemark,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
@@ -2688,7 +2725,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
       }
 
       const fgOutLocInsert = await invtDB.query(
-        "INSERT INTO `fg_location` (`fg_type`,`sku_code`, `fg_loc_out`,`qty`,`insert_dt`,`insert_by`,`fg_out_transaction`) VALUES ('OUT',:sku_code, :fg_loc_out,:fg_qty, :fg_insert_dt,:fg_insert_by,:out_id)",
+        "INSERT INTO `fg_location` (`fg_type`,`sku_code`, `fg_loc_out`,`qty`,`insert_dt`,`insert_by`,`fg_out_transaction`,`fg_bom`,`rate`) VALUES ('OUT',:sku_code, :fg_loc_out,:fg_qty, :fg_insert_dt,:fg_insert_by,:out_id,:bom,:rate)",
         {
           replacements: {
             sku_code: product[i],
@@ -2697,6 +2734,8 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
             fg_insert_dt: nowFull,
             fg_insert_by: req.logedINUser,
             out_id: transactionID,
+            bom: req.body.bom,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
@@ -2714,9 +2753,10 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
 
       // IN to drop location (mfg_production_3 + fg_location) — store drop in mfg_pro_location_in, pick (source) in fgout_pro_location_out
       const inInsert = await invtDB.query(
-        "INSERT INTO `mfg_production_3` (`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`fgout_pro_location_out`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`in_fg_rate`) VALUES (:branch,:sku, :totalIn, :by, :fulldate, :transaction, :ppr_id, :mfg_id, :loc_in, :fgout_loc_out, :insertdate,'TRANSFER', :pprcreatedby, :mfgcreatedby, :rate)",
+        "INSERT INTO `mfg_production_3` ( `txn_session`,`company_branch`,`mfg_pro_apr_sku`,`mfg_approve_in_qty`,`mfg_pro_apr_by`,`mfg_pro_apr_fulldate`,`mfg_pro_apr_transaction`,`mfg_ref_transid_1`,`mfg_ref_transid_2`,`mfg_pro_location_in`,`fgout_pro_location_out`,`mfgphase2_insert_date`,`type`,`ppr_created_by`,`mfg_created_by`,`mfg_pro_apr_bom`,`in_fg_rate`) VALUES ( :txn_session,:branch,:sku, :totalIn, :by, :fulldate, :transaction, :ppr_id, :mfg_id, :loc_in, :fgout_loc_out, :insertdate,'TRANSFER', :pprcreatedby, :mfgcreatedby, :bom, :rate)",
         {
           replacements: {
+            txn_session: helper.generateTxnSession(),
             branch: fromBranch,
             sku: prod.p_sku,
             totalIn: transferQty,
@@ -2730,7 +2770,8 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
             insertdate: nowFull,
             pprcreatedby: req.logedINUser,
             mfgcreatedby: req.logedINUser,
-            rate: fgRate || 0,
+            bom: req.body.bom,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
@@ -2747,7 +2788,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
       }
 
       const fgInLocInsert = await invtDB.query(
-        "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt)",
+        "INSERT INTO `fg_location` (`fg_type`,`sku_code`,`fg_loc_in`,`qty`,`ppr_id`,`mfg_id`,`fg_in_transaction`,`ppr_created_by`,`mfg_created_by`,`insert_by`,`mfg_created_dt`,`insert_dt`,`rate`) VALUES ('IN', :sku, :loc_in, :qty, :ppr_id, :mfg_id, :transaction_id, :ppr_created_by, :mfg_created_by, :insert_by, :mfg_created_dt, :insert_dt, :rate)",
         {
           replacements: {
             sku: prod.p_sku,
@@ -2761,6 +2802,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
             insert_by: req.logedINUser,
             mfg_created_dt: nowFull,
             insert_dt: nowFull,
+            rate: req.body.rate[i],
           },
           type: invtDB.QueryTypes.INSERT,
           transaction: t,
