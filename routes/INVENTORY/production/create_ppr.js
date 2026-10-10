@@ -134,7 +134,7 @@ router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     return res.json({
       code: 500,
-      massage: { msg: helper.firstErrorValidatorjs(validation) },
+      massage: helper.firstErrorValidatorjs(validation) ,
       status: "error",
     });
   }
@@ -149,11 +149,11 @@ router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
       }
     );
 
-    if (prod_stmt.length === 0) {
+    if (prod_stmt.length == 0) {
       return res.json({
-        code: 500,
+        success: false,
         status: "error",
-        message: { msg: "No Product Found" },
+        message: "No Product Found" ,
       });
     }
 
@@ -174,9 +174,9 @@ router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
 
     if (stmt.length === 0) {
       return res.json({
-        code: 500,
+        success:false,
         status: "error",
-        message: { msg: "No Bom Found" },
+        message: "No Bom Found",
       });
     }
 
@@ -190,7 +190,7 @@ router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
     }
 
     return res.json({
-      code: 200,
+      success: true,
       status: "success",
       data: boms,
       // other: {
@@ -203,9 +203,9 @@ router.post("/fetchProductDataByKey",[auth.isAuthorized], async (req, res) => {
 
   } catch (err) {
     return res.json({
-      code: 500,
+      success:false,
       status: "error",
-      message: { msg: "Internal Error!!! If this condition persists, contact your system administrator" },
+      message: "Internal Error!!! If this condition persists, contact your system administrator" ,
       error: err.stack,
     });
   }
