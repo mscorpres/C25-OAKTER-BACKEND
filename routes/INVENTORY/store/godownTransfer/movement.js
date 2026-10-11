@@ -1235,7 +1235,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     res.json({
-      code: 500,
+      success:false,
       message: "something you missing in form field to supply",
       data: validation.errors.all(),
       status: "error",
@@ -1255,7 +1255,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
     console.log("[godownStocksProduct] product fetch stmt0 length:", stmt0.length, "row:", stmt0[0] ? { p_sku: stmt0[0].p_sku, product_key: stmt0[0].product_key, p_name: stmt0[0].p_name } : null);
     if (stmt0.length <= 0) {
       return res.json({
-        code: 500,
+        success:false,
         message:"unregistered product found",
         status: "error",
       });
@@ -1282,7 +1282,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
       !stmt0[0].units_name
     ) {
       return res.json({
-        code: 500,
+        success:false,
         message: "product can not be transferred bcz seems it is not available in stock yet",
         status: "error",
       });
@@ -1588,7 +1588,7 @@ router.post("/report_fg2fg_same", [auth.isAuthorized], async (req, res) => {
   if (validation.fails()) {
     res.json({
       success: false,
-      code: 500,
+      success:false,
       message: "something you missing in form field to supply",
       data: validation.errors.all(),
       status: "error",
@@ -1603,7 +1603,7 @@ router.post("/report_fg2fg_same", [auth.isAuthorized], async (req, res) => {
       if (!date || date.length < 2) {
         return res.json({
           success: false,
-          code: 500,
+          success:false,
           message: "Invalid date range format (use DD-MM-YYYY to DD-MM-YYYY)",
           status: "error",
         });
@@ -1619,7 +1619,6 @@ router.post("/report_fg2fg_same", [auth.isAuthorized], async (req, res) => {
           success: false,
           status: "error",
           message: "on the w.e.f Nov 11, 2021: We can provide you 90 days OR (3 months) data only",
-          code: "500",
         });
       }
 
