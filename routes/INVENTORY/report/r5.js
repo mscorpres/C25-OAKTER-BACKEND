@@ -193,7 +193,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 
 			if (data.length === stmt1.length) {
 				return res.json({
-					status: "success", success: true,
+					status: "success",
 					success: true,
 					data: data,
 				});
@@ -203,7 +203,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 	} catch (error) {
 		res.json({
 			status: "error",
-			code: 500,
+			success: false,
 			message: "Internal Error<br/>If this condition persists, contact your system administrator",
 			error: error.stack,
 		});
