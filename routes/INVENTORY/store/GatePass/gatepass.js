@@ -251,7 +251,7 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
   var contact = req.body.contact;
   var other = req.body.other;
   var material = req.body.material;
-
+ 
   let validation_recipient = new Validator(recipient, {
     passtype: "required",
     name: "required",
@@ -265,7 +265,7 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
       data: validation_recipient.errors.all(),
     });
   }
-
+ 
   const toFindDublicates = (arry) =>
     arry.filter((item, index) => arry.indexOf(item) !== index);
   const dubliEle = toFindDublicates(material.component);
@@ -276,7 +276,7 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
       message: "You have entered the same component twice in a single request.",
     });
   }
-
+ 
   let itemLength = material.component.length;
   for (let i = 0; i < itemLength; i++) {
     let validation_material = new Validator(
@@ -298,22 +298,53 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
       });
     }
   }
-
+ 
   const t = await invtDB.transaction();
-
+ 
   try {
-    let transactionID = await helper.genTransaction("GATEPASS", t);
-
+    let stmt_trans_code = await invtDB.query(
+      "SELECT * FROM `ims_numbering` WHERE `for_number` = 'GATEPASS'",
+      {
+        type: invtDB.QueryTypes.SELECT,
+      }
+    );
+    let transactionID;
+    if (stmt_trans_code.length > 0) {
+      var suffix = stmt_trans_code[0].suffix;
+      suffix = parseInt(suffix) + 1;
+      suffix = suffix.toString();
+      suffix = suffix.padStart(
+        parseInt(stmt_trans_code[0].number_length_limit),
+        "0"
+      );
+      transactionID =
+        stmt_trans_code[0].prefix +
+        "/" +
+        stmt_trans_code[0].session +
+        "/" +
+        suffix;
+    } else {
+      let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
+      transactionID = "GP/" + currYear + "-" + (currYear + 1) + "/0001";
+    }
+ 
+    await invtDB.query(
+      "UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'GATEPASS'",
+      {
+        type: invtDB.QueryTypes.UPDATE,
+        transaction: t,
+      }
+    );
+ 
     let stmt_check_transID = await invtDB.query(
       "SELECT `gp_journal_id` FROM `ims_gatepass` WHERE `gp_journal_id` = :transaction_id GROUP BY `gp_journal_id` LIMIT 1",
       {
         replacements: { transaction_id: transactionID },
         type: invtDB.QueryTypes.SELECT,
-        transaction: t,
       }
     );
     if (stmt_check_transID.length > 0) {
-      t.rollback();
+      await t.rollback();
       return res.json({
         status: "error",
         success: false,
@@ -326,7 +357,9 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
     } else {
       let stmt2;
       for (let i = 0; i < itemLength; i++) {
-        if (helper.number(material.qty[i]) > 0) {
+        // qty can come with its unit from the frontend, e.g. "2 Roll"
+        const qty = parseFloat(material.qty[i]);
+        if (qty > 0) {
           stmt2 = await invtDB.query(
             "INSERT INTO `ims_gatepass`(`company_branch`,`gp_type`,`gp_name`,`gp_email`,`gp_mobile`,`gp_address`,`gp_part_code`,`gp_pass_qty`,`gp_part_remark`,`gp_journal_id`,`gp_narration`,`gp_insert_dt`,`gp_insert_by`) VALUES (:branch,:type,:name,:email,:mobile,:address,:part,:qty,:remark,:transaction,:narration,:in_dt,:in_by)",
             {
@@ -338,7 +371,7 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
                 mobile: contact.mobile == "" ? "--" : contact.mobile,
                 address: recipient.address.replace(/\n/g, "<br>"),
                 part: material.component[i],
-                qty: material.qty[i],
+                qty: qty,
                 remark: material.remark[i] == "" ? "--" : material.remark[i],
                 transaction: transactionID,
                 narration: other.narration == "" ? "--" : other.narration,
@@ -353,15 +386,15 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
           );
         }
       }
-      if (stmt2.length > 0) {
-        t.commit();
+      if (stmt2 && stmt2.length > 0) {
+        await t.commit();
         return res.json({
           status: "success",
           success: true,
           message: "GP Generated : Journal ID: " + transactionID,
         });
       } else {
-        t.rollback();
+        await t.rollback();
         return res.json({
           status: "error",
           success: false,
@@ -370,7 +403,14 @@ router.post("/createGP", [auth.isAuthorized], async (req, res) => {
       }
     }
   } catch (err) {
-    return helper.errorResponse(res, err);
+    if (!t.finished) await t.rollback().catch(() => {});
+    console.log(err);
+    return res.json({
+      success: false,
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
+      status: "error",
+      error: err.stack,
+    });
   }
 });
 
