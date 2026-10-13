@@ -181,7 +181,7 @@ router.post("/createBranchTransfer", [auth.isAuthorized], async (req, res) => {
       });
 
       // INSERT RM LOCATION ISSUE
-      let stmt_issue = await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,out_transaction_id)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:out_transaction_id)", {
+      let stmt_issue = await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,out_transaction_id,txn_session)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:out_transaction_id,:txn_session)", {
         replacements: {
           branch: req.branch,
           type: "ISSUE",
@@ -193,6 +193,7 @@ router.post("/createBranchTransfer", [auth.isAuthorized], async (req, res) => {
           indate: insert_dt,
           inby: req.logedINUser,
           out_transaction_id: trans_id,
+          txn_session: helper.generateTxnSession(),
         },
         type: invtDB.QueryTypes.INSERT,
         transaction: transaction,
@@ -200,7 +201,7 @@ router.post("/createBranchTransfer", [auth.isAuthorized], async (req, res) => {
       //   END INSERT RM LOCATION ISSUE
 
       // INSERT RM LOCATION INWARD
-      let stmt_inward = await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id , stock_status)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id , :stock_status)", {
+      let stmt_inward = await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id , stock_status,txn_session)VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id , :stock_status,:txn_session)", {
         replacements: {
           branch: req.branch,
           type: "INWARD",
@@ -212,7 +213,8 @@ router.post("/createBranchTransfer", [auth.isAuthorized], async (req, res) => {
           indate: insert_dt,
           inby: req.logedINUser,
           in_transaction_id: trans_id,
-          stock_status: 'INTRANSIT'
+          stock_status: 'INTRANSIT',
+          txn_session: helper.generateTxnSession(),
         },
         type: invtDB.QueryTypes.INSERT,
         transaction: transaction,
@@ -774,14 +776,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
           const sku_code = product[0].p_sku;
 
-          // DUPLICATE CHECK — sku_code is the products key-space, separate from RM's components_id key-space
-          const already_item = await invtDB.query("SELECT 1 FROM mfg_production_3 WHERE mfg_pro_apr_transaction = :trans_id AND mfg_pro_apr_sku = :sku_code AND type = 'IN' LIMIT 1", {
-            replacements: { trans_id: items[i].transId, sku_code },
-            type: invtDB.QueryTypes.SELECT,
-            transaction: transaction,
-          });
-
-          if (already_item.length > 0) continue;
+          // NO PER-ITEM DUPLICATE CHECK — SAME PRODUCT CAN REPEAT IN A CHALLAN, EVERY ROW MUST BE INWARDED (CHALLAN-LEVEL CHECK ABOVE BLOCKS RE-RECEIVING)
 
           // INSERT INTO mfg_production_3 (same FG-stock/WAR table used by savefginward — NOT fg_location, which stock/rate calculations don't read)
           await invtDB.query(
@@ -817,17 +812,11 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
 
         } else {
 
-          // DUPLICATE CHECK — components_id is the RM key-space
-          const already_item = await invtDB.query("SELECT 1 FROM rm_location WHERE in_transaction_id = :trans_id AND trans_type = 'INWARD' AND components_id = :component LIMIT 1", {
-            replacements: { trans_id: items[i].transId, component: items[i].componentKey },
-            type: invtDB.QueryTypes.SELECT,
-            transaction: transaction,
-          });
-
-          if (already_item.length > 0) continue;
+          // NO PER-ITEM DUPLICATE CHECK — SAME COMPONENT CAN REPEAT IN A CHALLAN (DIFFERENT PICK LOCATIONS), EVERY ROW MUST BE INWARDED.
+          // RE-RECEIVING THE SAME CHALLAN IS ALREADY BLOCKED BY THE "ALREADY INWARDED CHECK" ABOVE.
 
           // INSERT RM LOCATION INWARD
-          await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name,vendor_type) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name,:vendor_type)", {
+          await invtDB.query("INSERT INTO rm_location (company_branch,trans_type,components_id,loc_in,loc_out,qty,any_remark,insert_date,insert_by,in_transaction_id,stock_status,in_po_rate,in_vendor_name,vendor_type,txn_session) VALUES (:branch,:type,:component,:loc_in,:loc_out,:qty,:remark,:indate,:inby,:in_transaction_id,:stock_status,:in_po_rate,:in_vendor_name,:vendor_type,:txn_session)", {
             replacements: {
               branch: req.branch,
               type: "INWARD",
@@ -843,6 +832,7 @@ router.post("/createBranchTransferInward", [auth.isAuthorized], async (req, res)
               in_po_rate: items[i].rate ? items[i].rate : 0,
               in_vendor_name: items[i].vendorCode ? items[i].vendorCode : "--",
               vendor_type: "BT",
+              txn_session: helper.generateTxnSession(),
             },
             type: invtDB.QueryTypes.INSERT,
             transaction: transaction,
