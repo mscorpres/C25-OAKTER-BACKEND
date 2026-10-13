@@ -487,8 +487,8 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
             : rowMinData?.mfgPoRef &&
               rowMinData.mfgPoRef !== "--" &&
               String(rowMinData.mfgPoRef).trim() !== ""
-            ? String(rowMinData.mfgPoRef)
-            : null;
+              ? String(rowMinData.mfgPoRef)
+              : null;
 
         const po = rowPoLookupKey ? poMap.get(rowPoLookupKey) : null;
         const jw = jwMap.get(row.jw_id);
@@ -600,9 +600,12 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
           tdsLedgerMap.set(rowTdsName, currentTds + rowTdsAmt);
         }
 
+        // Determine the Raw Material godown based on the active branch
+        const rmGodown = branch === "Alwar" ? "RM001_Alwar" : "GDRM001_C25";
+
         const godown =
           row.txn_type === "RAW" || row.txn_type === "SER"
-            ? "GDRM001_C25"
+            ? rmGodown
             : "GDFG001";
 
         const isTaxable = Number(row.vbt_gst_rate) > 0 ? "Taxable" : "Non-Taxable";
@@ -619,11 +622,11 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
           category: "Main",
           costcentreallocations: costCenterAlias
             ? [
-                {
-                  name: costCenterAlias,
-                  amount: taxableVal.toFixed(2),
-                },
-              ]
+              {
+                name: costCenterAlias,
+                amount: taxableVal.toFixed(2),
+              },
+            ]
             : [],
         });
       }
