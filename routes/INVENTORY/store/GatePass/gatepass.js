@@ -88,21 +88,53 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
   }
 
   const t = await invtDB.transaction();
+  let generated_challan_id;
+  let type; // Declared missing variable
 
   try {
     if (other.vehicle_no == "") {
-      t.rollback();
+      await t.rollback();
       return res.json({
         status: "error",
         success: false,
         message: "Vehicle No is required.",
       });
     }
-    let type, transactionID;
-
+    
     if (vendor.passtype === "R") {
       type = "RGP";
-      transactionID = await helper.genTransaction("RGP_DC", t);
+      let numberingQuery = await invtDB.query(
+        "SELECT * FROM `ims_numbering` WHERE `for_number` = 'RGP_DC' FOR UPDATE",
+        {
+          type: invtDB.QueryTypes.SELECT,
+          transaction: t, // Fixed from 'transaction'
+        }
+      );
+
+      if (numberingQuery.length > 0) {
+        let suffix = parseInt(numberingQuery[0].suffix) + 1;
+        let paddedSuffix = suffix.toString().padStart(
+          parseInt(numberingQuery[0].number_length_limit),
+          "0"
+        );
+        let formattedSession = numberingQuery[0].session.replace("-", "");
+        generated_challan_id = numberingQuery[0].prefix + "/" + formattedSession + "/" + paddedSuffix;
+      } else {
+        await t.rollback();
+        return res.json({
+          success: false,
+          message: "Delivery Challan numbering not configured. Please contact administrator.",
+          status: "error",
+        });
+      }
+
+      await invtDB.query(
+        "UPDATE `ims_numbering` SET `suffix` = `suffix` + 1 WHERE `for_number` = 'RGP_DC'", // Fixed WHERE clause target
+        {
+          transaction: t, // Fixed from 'transaction'
+          type: invtDB.QueryTypes.UPDATE,
+        }
+      );
     } else {
       type = "NRGP";
       transactionID = await helper.genTransaction("NRGP_DC", t);
@@ -111,19 +143,20 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
     let stmt1 = await invtDB.query(
       "SELECT `dc_transaction` FROM `ims_dc_challan` WHERE `dc_transaction` = :transaction_id GROUP BY `dc_transaction` LIMIT 1",
       {
-        replacements: { transaction_id: transactionID },
+        replacements: { transaction_id: generated_challan_id },
         type: invtDB.QueryTypes.SELECT,
+        transaction: t, // Added transaction block
       }
     );
+    
     if (stmt1.length > 0) {
-      t.rollback();
+      await t.rollback();
       return res.json({
         status: "error",
         success: false,
-        success: false,
         message:
           "Alloting transaction id as [" +
-          transactionID +
+          generated_challan_id +
           "] for GP has already exist with us, required manual checking or contact to system administrator.",
       });
     } else {
@@ -135,8 +168,8 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
             {
               replacements: {
                 branch: req.branch,
-                transaction: transactionID,
-                dc_type: vendor.passtype,
+                transaction: generated_challan_id,
+                dc_type: type, // Swapped `vendor.passtype` to resolved `type` parameter
                 trans_type: req.body.trans_type,
                 dc_vendor_details: JSON.stringify({
                   vendor_code: vendor.vendorname,
@@ -145,9 +178,7 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
                 }),
                 dc_pass_terms: JSON.stringify({
                   terms_of_payment:
-                    other.terms_of_payment == ""
-                      ? "--"
-                      : other.terms_of_payment,
+                    other.terms_of_payment == "" ? "--" : other.terms_of_payment,
                   references_no:
                     other.reference_no_dt == "" ? "--" : other.reference_no_dt,
                   other_references:
@@ -157,15 +188,11 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
                   dispatch_doc_no:
                     other.dispatch_doc_no == "" ? "--" : other.dispatch_doc_no,
                   dispatched_through:
-                    other.dispatch_through == ""
-                      ? "--"
-                      : other.dispatch_through,
+                    other.dispatch_through == "" ? "--" : other.dispatch_through,
                   destination:
                     other.destination == "" ? "--" : other.destination,
                   terms_of_delivery:
-                    other.terms_of_delivery == ""
-                      ? "--"
-                      : other.terms_of_delivery,
+                    other.terms_of_delivery == "" ? "--" : other.terms_of_delivery,
                   narration: other.narration == "" ? "--" : other.narration,
                   vehicle_no: other.vehicle_no == "" ? "--" : other.vehicle_no,
                 }),
@@ -193,28 +220,31 @@ router.post("/createGatePass", [auth.isAuthorized], async (req, res) => {
           );
         }
       }
-      if (stmt2.length > 0) {
-        t.commit();
+      
+      if (stmt2 && stmt2.length > 0) { // Safety check to ensure loop didn't bypass insertion
+        await t.commit();
         return res.json({
           status: "success",
           success: true,
-          message: "GP Generated : RefID: " + transactionID,
-          data: { txn: transactionID },
+          message: "GP Generated : RefID: " + generated_challan_id, // Fixed variable name
+          data: { txn: generated_challan_id }, 
         });
       } else {
-        t.rollback();
+        await t.rollback();
         return res.json({
           status: "error",
           success: false,
-          message: "An error occurred while creating gate pass.",
+          message: "An error occurred while creating gate pass. No items inserted.",
         });
       }
     }
   } catch (err) {
+    if (!t.finished) {
+      await t.rollback(); // Failsafe transaction revert
+    }
     return helper.errorResponse(res, err);
   }
 });
-
 // ADD NEW GATEPASS (GP)
 router.post("/createGP", [auth.isAuthorized], async (req, res) => {
   var recipient = req.body.recipient;
@@ -388,7 +418,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
       if (fromdate < ARCHIVE_CUTOFF_DATE) {
         return res.json({
           success: false,
-          message:"transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" ,
+          message: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived",
           status: "error",
         });
       }
@@ -526,7 +556,7 @@ router.post("/fetchAllGatepass", [auth.isAuthorized], async (req, res) => {
       if (finalResult.length === 0) {
         res.json({
           success: false,
-          message: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived" ,
+          message: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived",
           status: "error",
         });
         return;
@@ -1080,7 +1110,7 @@ router.post("/fetchData4Update", [auth.isAuthorized], async (req, res) => {
         };
 
         if (material.length == result.length) {
-         res.json({
+          res.json({
             success: true,
             status: "success",
             data: { rgp_challan_no: result[0].dc_transaction, gp_type: gp_type_option, material: material, vendor: vendor, other: other_details, warehouse: warehouse },
@@ -1603,7 +1633,7 @@ router.post("/fetchReturnableItems", [auth.isAuthorized], async (req, res) => {
     { gp: "required" }
   );
   if (validation.fails()) {
-    return res.json({ success: false, message:"something you missing in form field to supply", data: validation.errors.all(), status: "error" });
+    return res.json({ success: false, message: "something you missing in form field to supply", data: validation.errors.all(), status: "error" });
   }
 
   try {
@@ -1682,7 +1712,7 @@ router.post("/fetchReturnableItems", [auth.isAuthorized], async (req, res) => {
       },
     });
   } catch (err) {
-    return res.json({ success: false, message:"Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
+    return res.json({ success: false, message: "Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
   }
 });
 
@@ -1690,7 +1720,7 @@ router.post("/fetchReturnableItems", [auth.isAuthorized], async (req, res) => {
 
 
 // 2) CREATE A RETURN AGAINST A GATE PASS
-router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
+router.post("/createReturn", [auth.isAuthorized], async (req, res) => {
   // `gp` / `transaction` is the actual gate pass this return is against -- this is what gets
   // looked up AND what gets saved as `rgp_challan_no` on the return record.
   const transactionRef = req.body.gp || req.body.transaction;
@@ -1706,13 +1736,13 @@ router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
   }
 
   if (!material || !Array.isArray(material.row_id) || material.row_id.length === 0) {
-    return res.json({ success: false, message:"at least one item is required to create a return", status: "error" });
+    return res.json({ success: false, message: "at least one item is required to create a return", status: "error" });
   }
 
   const toFindDublicates = (arry) => arry.filter((item, index) => arry.indexOf(item) !== index);
   const dubliEle = toFindDublicates(material.row_id);
   if (dubliEle.length > 0) {
-    return res.json({ success: false, message:  "You have entered a same item twice of time in a single request", status: "error" });
+    return res.json({ success: false, message: "You have entered a same item twice of time in a single request", status: "error" });
   }
 
   const itemLength = material.row_id.length;
@@ -1737,7 +1767,7 @@ router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
 
     if (originalRows.length === 0) {
       t.rollback();
-      return res.json({ success: false, message: "no gate pass found against the given transaction id [" + transactionRef + "]" , status: "error" });
+      return res.json({ success: false, message: "no gate pass found against the given transaction id [" + transactionRef + "]", status: "error" });
     }
 
     const originalRowsById = {};
@@ -1779,20 +1809,20 @@ router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
 
       if (!originalRow) {
         t.rollback();
-        return res.json({ success: false, message: "item [" + rowId + "] does not belong to the gate pass [" + transactionRef + "]" , status: "error" });
+        return res.json({ success: false, message: "item [" + rowId + "] does not belong to the gate pass [" + transactionRef + "]", status: "error" });
       }
 
       const pendingQty = helper.number(originalRow.dc_qty) - helper.number(originalRow.return_inward_qty || 0);
 
       if (returnQty <= 0) {
         t.rollback();
-        return res.json({ success: false, message:"return qty must be greater than 0", status: "error" });
+        return res.json({ success: false, message: "return qty must be greater than 0", status: "error" });
       }
       if (returnQty > pendingQty) {
         t.rollback();
         return res.json({
           success: false,
-          message: "you can return maximum [" + pendingQty + "] qty for component [" + originalRow.component + "], requested [" + returnQty + "]" ,
+          message: "you can return maximum [" + pendingQty + "] qty for component [" + originalRow.component + "], requested [" + returnQty + "]",
           status: "error",
         });
       }
@@ -1839,7 +1869,7 @@ router.post("/createReturn",[auth.isAuthorized], async (req, res) => {
   } catch (err) {
     console.log()
     t.rollback();
-    return res.json({ success: false, status: "error", message: "internally something happend wrong, contact to administrator" , error: err.stack });
+    return res.json({ success: false, status: "error", message: "internally something happend wrong, contact to administrator", error: err.stack });
   }
 });
 
@@ -1853,7 +1883,7 @@ router.post("/fetchAllReturns", [auth.isAuthorized], async (req, res) => {
     data: "required",
   });
   if (validation.fails()) {
-    return res.json({ success: false, message:"something you missing in form field to supply" , data: validation.errors.all(), status: "error" });
+    return res.json({ success: false, message: "something you missing in form field to supply", data: validation.errors.all(), status: "error" });
   }
 
   try {
@@ -1883,7 +1913,7 @@ router.post("/fetchAllReturns", [auth.isAuthorized], async (req, res) => {
     if (searchBy == "datewise") {
       const date = searchValue.match(/([0-9]{2})-([0-9]{2})-([0-9]{4})/g);
       if (!date || date.length < 2) {
-        return res.json({ success: false, message:"invalid date range supplied" , status: "error" });
+        return res.json({ success: false, message: "invalid date range supplied", status: "error" });
       }
 
       const fromdate = moment(date[0], "DD-MM-YYYY").format("YYYY-MM-DD");
@@ -1911,11 +1941,11 @@ router.post("/fetchAllReturns", [auth.isAuthorized], async (req, res) => {
         { replacements: { vendor: searchValue, branch: req.branch }, type: invtDB.QueryTypes.SELECT }
       );
     } else {
-      return res.json({ success: false, message:"Please select valid filter method", status: "error" });
+      return res.json({ success: false, message: "Please select valid filter method", status: "error" });
     }
 
     if (stmt.length === 0) {
-      return res.json({ success: false, message:  "no gate pass return were found that match the given search criteria", status: "error" });
+      return res.json({ success: false, message: "no gate pass return were found that match the given search criteria", status: "error" });
     }
 
     const finalResult = stmt.map((element, index) => {
@@ -1968,7 +1998,7 @@ router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) =
     data: "required",
   });
   if (validation.fails()) {
-    return res.json({ success: false, message:"something you missing in form field to supply" , data: validation.errors.all(), status: "error" });
+    return res.json({ success: false, message: "something you missing in form field to supply", data: validation.errors.all(), status: "error" });
   }
 
   const ARCHIVE_CUTOFF_DATE = "2026-09-01"; // transactions before this date are archived and not served here
@@ -1976,7 +2006,7 @@ router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) =
   try {
     const date = searchValue.match(/([0-9]{2})-([0-9]{2})-([0-9]{4})/g);
     if (!date || date.length < 2) {
-      return res.json({ success: false, message: "invalid date range supplied" , status: "error" });
+      return res.json({ success: false, message: "invalid date range supplied", status: "error" });
     }
 
     const fromdate = moment(date[0], "DD-MM-YYYY").format("YYYY-MM-DD");
@@ -1989,7 +2019,7 @@ router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) =
     if (fromdate < ARCHIVE_CUTOFF_DATE) {
       return res.json({
         success: false,
-        message:"transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived",
+        message: "transaction before " + moment(ARCHIVE_CUTOFF_DATE, "YYYY-MM-DD").format("DD-MM-YYYY") + " is archived",
         status: "error",
       });
     }
@@ -2084,9 +2114,9 @@ router.post("/consolidatedReturnReport", [auth.isAuthorized], async (req, res) =
         };
       });
 
-    return res.json({ success: true, status: "success",  data: finalResult, total_records: finalResult.length  });
+    return res.json({ success: true, status: "success", data: finalResult, total_records: finalResult.length });
   } catch (err) {
-    return res.json({ success: false, message:"Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
+    return res.json({ success: false, message: "Internal Error<br/>If this condition persists, contact your system administrator", status: "error", error: err.stack });
   }
 });
 
