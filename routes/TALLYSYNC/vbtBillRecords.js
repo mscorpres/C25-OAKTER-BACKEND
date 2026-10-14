@@ -701,6 +701,11 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
       });
     }
 
+    // Send vouchers in voucher-number sequence (FY/2627/0008, 0009, 0010 ...)
+    vouchers.sort((a, b) =>
+      a.vouchernumber.localeCompare(b.vouchernumber, undefined, { numeric: true })
+    );
+
     return vouchers;
   })();
 }
