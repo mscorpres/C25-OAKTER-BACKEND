@@ -95,8 +95,7 @@ function getTransactionDetails(item) {
       transaction_id: item.out_transaction_id ?? "NA",
     };
   }
-  // kuch CONSUMPTION rows (jaise jobwork droppage) mein in_module "" / NULL aata hai
-  if (type === "CONSUMPTION" && (!item.in_module || item.in_module === "--")) {
+  if (type === "CONSUMPTION" && item.in_module === "--") {
     return {
       mode: "CONSUMP",
 
