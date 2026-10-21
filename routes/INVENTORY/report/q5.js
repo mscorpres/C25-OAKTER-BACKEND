@@ -167,7 +167,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     });
 
     if (stmt_get_all_location.length == 0) {
-      return res.json({ success: false, message: "There is no location!!!", status: "false" });
+      return res.json({ success: false, message: "", status: "false" });
     }
 
     let close_data = [];

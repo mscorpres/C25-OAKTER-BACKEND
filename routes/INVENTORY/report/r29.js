@@ -9,7 +9,6 @@ const Validator = require("validatorjs");
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 
-
 //Required Passing Parameters:
 
 //1.  product
@@ -26,7 +25,6 @@ function byPart(a, b) {
 
 router.post("/", [auth.isAuthorized], async (req, res) => {
   try {
-
     const valid = new Validator(req.body, {
       date: "required",
       product: "required",
@@ -44,7 +42,8 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     const durationInMonths = moment(date[1], "DD-MM-YYYY").diff(moment(date[0], "DD-MM-YYYY"), "months");
     if (durationInMonths > 3) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "on the w.e.f Nov 11, 2021: We can provide you 90 days OR (3 months) data only",
       });
@@ -52,7 +51,6 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 
     if (req.body.date == "") {
       return res.json({ status: "error", success: false, message: "Please supply date" });
-
     }
     if (req.body.product == "") {
       return res.json({ status: "error", success: false, message: "Please supply product" });
@@ -63,7 +61,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
 
     let location_key = "";
     // A21 R1 SF LOCATION
-    if (req.branch == "BRALWR36") {
+    if (req.branch == "BROAKTRC25") {
       location_key = "20240121369635";
     }
     // B29 R1 SF LOCATION
@@ -92,21 +90,21 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       {
         replacements: { subject: req.body.subject },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
     const data = [];
     stmt1.map(async (item) => {
-
-      let stmt3 = await invtDB.query("SELECT (SELECT COALESCE(SUM(qty+other_qty), 0) AS inward FROM rm_location WHERE components_id = :component AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') BETWEEN :date1 AND :date2) AS inward, (SELECT COALESCE(SUM(qty+other_qty), 0) AS outward FROM rm_location WHERE components_id = :component AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') BETWEEN :date1 AND :date2) outward ,(SELECT COALESCE(SUM(qty+other_qty), 0) AS inbefor FROM rm_location WHERE components_id = :component AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') < :date1 ) AS inbefor ,  (SELECT COALESCE(SUM(qty+other_qty), 0) AS outward FROM rm_location WHERE components_id = :component AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') < :date1) AS outbefore FROM DUAL",
+      let stmt3 = await invtDB.query(
+        "SELECT (SELECT COALESCE(SUM(qty+other_qty), 0) AS inward FROM rm_location WHERE components_id = :component AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') BETWEEN :date1 AND :date2) AS inward, (SELECT COALESCE(SUM(qty+other_qty), 0) AS outward FROM rm_location WHERE components_id = :component AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') BETWEEN :date1 AND :date2) outward ,(SELECT COALESCE(SUM(qty+other_qty), 0) AS inbefor FROM rm_location WHERE components_id = :component AND trans_type IN ('INWARD' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_in IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') < :date1 ) AS inbefor ,  (SELECT COALESCE(SUM(qty+other_qty), 0) AS outward FROM rm_location WHERE components_id = :component AND trans_type IN ('CONSUMPTION' , 'ISSUE' , 'JOBWORK' , 'REJECTION' , 'TRANSFER') AND loc_out IN (:location) AND DATE_FORMAT(insert_date,'%Y-%m-%d') < :date1) AS outbefore FROM DUAL",
         {
           replacements: {
             component: item.component_key,
             date1: fromdate,
             date2: todate,
-            location: all_branch__location
+            location: all_branch__location,
           },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
 
       let inward_all_qty, outward_all_qty, opening_qty;
@@ -115,7 +113,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         outward_all_qty = stmt3[0].outward;
         opening_qty = stmt3[0].inbefor - stmt3[0].outbefore;
       } else {
-        inward_all_qty = 0, outward_all_qty = 0, opening_qty = 0;
+        ((inward_all_qty = 0), (outward_all_qty = 0), (opening_qty = 0));
       }
 
       //CLOSING QUANTITY
@@ -151,7 +149,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         {
           replacements: { component: item.component_key },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
       if (stmt6.length > 0) {
         last_costing = stmt6[0].last_cost_rate;
@@ -170,14 +168,17 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       //FETCH ALTERNATIVE PART CODES
       let alt_component_part = [];
       let alt_component_name = [];
-      let stmt8 = await invtDB.query("SELECT * FROM `alternative_components` WHERE `alt_mother_component` = :component AND `alt_subject` = :subject AND `alt_product_sku` = :product AND `alt_type` = 'default'", {
-        replacements: {
-          component: item.component_key,
-          subject: req.body.subject,
-          product: item.p_sku,
+      let stmt8 = await invtDB.query(
+        "SELECT * FROM `alternative_components` WHERE `alt_mother_component` = :component AND `alt_subject` = :subject AND `alt_product_sku` = :product AND `alt_type` = 'default'",
+        {
+          replacements: {
+            component: item.component_key,
+            subject: req.body.subject,
+            product: item.p_sku,
+          },
+          type: invtDB.QueryTypes.SELECT,
         },
-        type: invtDB.QueryTypes.SELECT,
-      });
+      );
       if (stmt8.length > 0) {
         if (item.bom_status == "ALT") {
           let stmt9 = invtDB.query("SELECT * FROM `components` WHERE `component_key` = :component", {
@@ -281,16 +282,16 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         data.sort(byPart);
 
         return res.json({
-          status: "success", success: true,
+          status: "success",
+          success: true,
           success: true,
           message: "Report fetched successfully",
           data: data,
         });
       }
     });
-
   } catch (error) {
-      return helper.errorResponse(res, error);
+    return helper.errorResponse(res, error);
   }
 });
 

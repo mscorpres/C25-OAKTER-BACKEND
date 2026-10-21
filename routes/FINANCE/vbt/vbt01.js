@@ -4,6 +4,7 @@ const router = express.Router();
 let { tallyDB, invtDB } = require("../../../config/db/connection");
 
 const auth = require("../../../middleware/auth");
+const { getNextVbtNumber } = require("../../../helper/utils/vbtNumbering");
 
 const Validator = require("validatorjs");
 
@@ -1202,32 +1203,7 @@ router.post("/add_vbt01", [auth.isAuthorized], async (req, res) => {
       });
     }
 
-    const stmt_number = await tallyDB.query(
-      "SELECT * FROM `tally_numbering` WHERE `for_number` = 'VBT01' FOR UPDATE",
-      { type: tallyDB.QueryTypes.SELECT, transaction },
-    );
-
-    let vbt_no;
-    if (stmt_number.length > 0) {
-      const row = stmt_number[0];
-      const suffix = String(parseInt(row.suffix) + 1).padStart(
-        parseInt(row.number_length_limit),
-        "0",
-      );
-      vbt_no = `${row.prefix}/${row.session}/${suffix}`;
-    } else {
-      const currYear = parseInt(
-        new Date().getFullYear().toString().substr(2, 2),
-      );
-      vbt_no = `VBT01/${currYear}-${currYear + 1}/0001`;
-    }
-
-    await tallyDB.query(
-      "UPDATE `tally_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'VBT01'",
-      { type: tallyDB.QueryTypes.UPDATE, transaction },
-    );
-
-    vbt_key = vbt_no;
+    vbt_key = await getNextVbtNumber(transaction);
 
     let lastInsertedID, comp_key;
 

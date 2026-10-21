@@ -2,8 +2,13 @@ module.exports = function (app) {
   // API
   app.use("/tally", require("./TALLYSYNC/tally"));
 
-  // TALLYSYNC
-  app.use("/tallysync/v1/json", require("./TALLYSYNC/sf-cons"));
+  // TALLYSYNC - Routes with GST parameter for branch-specific database routing
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/sf-cons"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/jw-sfgInward"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/rm-sf"));
+  app.use("/tallysync/v1/json/gst=:gst", require("./TALLYSYNC/goDown/rm-cons"));
+  app.use("/tallysync/v1/json", require("./TALLYSYNC/vbtBillRecords"));
+  app.use("/tallysync/v1/json/jw/", require("./TALLYSYNC/jobwork/stockJournalTransfe"));
 
   app.use("/api/v1/", require("./INVENTORY/API/retriveMIN"));
   app.use("/version", require("./VERSION/version"));
@@ -197,6 +202,8 @@ module.exports = function (app) {
   app.use("/tally/vbt05", require("./FINANCE/vbt/vbt05"));
   app.use("/tally/vbt06", require("./FINANCE/vbt/vbt06"));
   app.use("/tally/vbt07", require("./FINANCE/vbt/vbt07"));
+  app.use("/tally/vbt08", require("./FINANCE/vbt/vbt08"));
+  app.use("/tally/vbt09", require("./FINANCE/vbt/vbt09"));
   app.use("/tally/vbt_report", require("./FINANCE/vbt/vbt_report"));
   app.use("/tally/voucher", require("./FINANCE/vouchers/vouchers"));
   app.use("/tally/jv", require("./FINANCE/vouchers/journal_posting"));
@@ -221,6 +228,7 @@ module.exports = function (app) {
     app.use("/org", require("./ADMIN/company"));
     app.use("/admin/po_mail", require("./ADMIN/poTeam"));
     app.use("/changelog", require("./ADMIN/changelog"));
+    app.use("/admin", require("./ADMIN/userProfile"));
 
   // SOP
   app.use("/drive", require("./SOP/sop"));

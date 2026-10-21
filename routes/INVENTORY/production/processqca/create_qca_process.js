@@ -8,232 +8,214 @@ let { invtDB } = require("../../../../config/db/connection");
 const Validator = require("validatorjs");
 
 // CREATE BULK QCA PROCESS ENTRY
-router.post(
-  "/bulk_insert_qca_Process",
-  [auth.isAuthorized],
-  async (req, res) => {
-    const validation = new Validator(req.body, {
-      qca_ppr: "required",
-      qca_process: "required",
-      qca_result: "required",
-      numberRows: "required",
+router.post("/bulk_insert_qca_Process", [auth.isAuthorized], async (req, res) => {
+  const validation = new Validator(req.body, {
+    qca_ppr: "required",
+    qca_process: "required",
+    qca_result: "required",
+    numberRows: "required",
+  });
+
+  if (validation.fails()) {
+    return res.json({
+      status: "error",
+      success: false,
+      success: false,
+      message: helper.firstErrorValidatorjs(validation),
+    });
+  }
+
+  //Get SKU from PPR No.
+  const stmt2 = await invtDB.query("SELECT prod_product_sku FROM mfg_production_1 WHERE prod_transaction = :ppr", {
+    replacements: { ppr: req.body.qca_ppr },
+    type: invtDB.QueryTypes.SELECT,
+  });
+
+  if (stmt2.length === 0) {
+    return res.json({
+      status: "error",
+      success: false,
+      success: false,
+      message: "SKU not found",
+    });
+  }
+
+  let qca_sku = stmt2[0].prod_product_sku;
+
+  // CHECK PROCESS MAPPED WITH SKU
+  const stmt1 = await invtDB.query("SELECT * FROM qa_process WHERE qa_sku = :sku AND qa_process = :process", {
+    replacements: { sku: qca_sku, process: req.body.qca_process },
+    type: invtDB.QueryTypes.SELECT,
+  });
+
+  if (stmt1.length === 0) {
+    return res.json({
+      status: "error",
+      success: false,
+      success: false,
+      message: "Process not assign to SKU!!!",
+    });
+  }
+
+  // CHECK LOAD SIZE
+  if (Number(req.body.numberRows) > Number(stmt1[0].lot_size)) {
+    return res.json({
+      status: "error",
+      success: false,
+      success: false,
+      message: `Generated Qty is exceeded ( lot size ${stmt1[0].lot_size}) !!!`,
+    });
+  }
+
+  // CHECK PPR EXE QTY
+  const checkPpr = await invtDB.query("SELECT * FROM mfg_production_1 WHERE prod_transaction = :ppr", {
+    replacements: { ppr: req.body.qca_ppr },
+    type: invtDB.QueryTypes.SELECT,
+  });
+
+  if (Number(checkPpr[0].prod_planned_qty) - Number(checkPpr[0].prod_executed_qty) < Number(req.body.numberRows)) {
+    return res.json({
+      status: "error",
+      success: false,
+      success: false,
+      message: `Generated Qty is exceeded ( PPR qty ${checkPpr[0].prod_planned_qty} - ${checkPpr[0].prod_executed_qty}) !!!`,
+    });
+  }
+  // END CHECK PPR EXE QTY
+
+  let qca_subject = stmt1[0].qa_subject;
+  let level = stmt1[0].qa_process_level;
+  let from_location = stmt1[0].process_loc;
+
+  if (level > 1) {
+    return res.status(500).send({ success: false, message: "Level not be grater than one" });
+  }
+
+  let to_location;
+  if (req.body.qca_result == "PASS") {
+    to_location = stmt1[0].process_pass_loc;
+  } else {
+    to_location = stmt1[0].process_fail_loc;
+  }
+
+  const transaction = await invtDB.transaction();
+  try {
+    let barcode;
+
+    const bulkInsertData = [];
+    const allBarcodes = [];
+
+    const prefix = moment().format("YYMMDDHHmmss");
+    for (let i = 0; i < req.body.numberRows; i++) {
+      barcode = prefix.toString() + Math.floor(Math.random() * 99999 + 10000);
+
+      // if (level > 1) {
+      // return res.status(500).send({ success: false, message: "Level not be grater than one" });
+      // const prevProcess = level - 1;
+      // const prevLeveldata = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_sku = :sku AND qca_process_level = :prevLevel AND qca_result = 'PASS'", {
+      //   replacements: { barcode: barcode, sku: qca_sku, prevLevel: prevProcess },
+      //   type: invtDB.QueryTypes.SELECT,
+      //   transaction: transaction,
+      // });
+
+      // if (prevLeveldata.length === 0) {
+      //   await transaction.rollback();
+      //   return res.json({ status: "error", success: false, message: "This data not be present at Previous level or Fail at previous level." });
+      // }
+      // }
+
+      allBarcodes.push(barcode);
+
+      // GET LAST PROCESS
+      // const checkData = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_process = :process AND qca_result = 'PASS' ORDER BY ID DESC LIMIT 1 ", {
+      //   replacements: {
+      //     barcode: barcode,
+      //     process: req.body.qca_process,
+      //   },
+      //   type: invtDB.QueryTypes.SELECT,
+      //   transaction: transaction,
+      // });
+
+      // if (checkData.length > 0) {
+      //   if (checkData[0].qca_result === "PASS") {
+      //     await transaction.rollback();
+      //     return res.json({ status: "error", success: false, message: "This QCA is already Pass" });
+      //   }
+      // }
+
+      bulkInsertData.push({
+        qca_barcode: barcode,
+        qca_ppr: req.body.qca_ppr,
+        qca_sku: qca_sku,
+        qca_process: req.body.qca_process,
+        qca_process_level: level,
+        qca_bom_id: qca_subject,
+        qca_result: req.body.qca_result,
+        qca_fail_reason: req.body.failReason ?? "--",
+        qca_correction: req.body.correction ?? "--",
+        qca_from_loc: from_location,
+        qca_to_loc: to_location,
+        qca_insert_by: req.logedINUser,
+        qca_insertdt: moment().format("YYYY-MM-DD HH:mm:ss"),
+      });
+
+      // const result = await invtDB.query(
+      //   "INSERT INTO qca (qca_barcode, qca_ppr, qca_sku, qca_process, qca_process_level, qca_bom_id, qca_result, qca_fail_reason, qca_correction, qca_from_loc, qca_to_loc, qca_insert_by, qca_insertdt) VALUES (:qca_barcode, :qca_ppr, :qca_sku, :qca_process, :qca_process_level, :qca_bom_id, :qca_result, :qca_fail_reason, :correction, :from_loc, :to_loc, :insert_by, :insert_dt )",
+      //   {
+      //     replacements: {
+      //       qca_barcode: barcode,
+      //       qca_ppr: req.body.qca_ppr,
+      //       qca_sku: qca_sku,
+      //       qca_process: req.body.qca_process,
+      //       qca_process_level: level,
+      //       qca_bom_id: qca_subject,
+      //       qca_result: req.body.qca_result,
+      //       qca_fail_reason: req.body.failReason ?? "--",
+      //       qca_correction: req.body.correction ?? "--",
+      //       qca_from_loc: from_location,
+      //       qca_to_loc: to_location,
+      //       qca_insert_by: req.logedINUser,
+      //       qca_insertdt: moment().format("YYYY-MM-DD HH:mm:ss"),
+      //     },
+      //     type: invtDB.QueryTypes.INSERT,
+      //     transaction: transaction,
+      //   }
+      // );
+
+      // if (result.length === 0) {
+      //   await transaction.rollback();
+      //   return res.json({ status: "error", success: false, message: "Failed to added data" });
+      // }
+      //
+    }
+
+    const checkData = await invtDB.query("SELECT * FROM qca WHERE qca_barcode IN (:barcode) AND qca_process = :process AND qca_result = 'PASS' ORDER BY ID DESC LIMIT 1 ", {
+      replacements: {
+        barcode: allBarcodes,
+        process: req.body.qca_process,
+      },
+      type: invtDB.QueryTypes.SELECT,
+      transaction: transaction,
     });
 
-    if (validation.fails()) {
+    if (checkData.length > 0) {
+      await transaction.rollback();
       return res.json({
-        status: "error", success: false,
+        status: "error",
         success: false,
-        message: helper.firstErrorValidatorjs(validation),
+        success: false,
+        message: "This QCA is already Pass",
       });
     }
 
-    //Get SKU from PPR No.
-    const stmt2 = await invtDB.query(
-      "SELECT prod_product_sku FROM mfg_production_1 WHERE prod_transaction = :ppr",
-      {
-        replacements: { ppr: req.body.qca_ppr },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    await invtDB.getQueryInterface().bulkInsert("qca", bulkInsertData, { transaction: transaction });
 
-    if (stmt2.length === 0) {
-      return res.json({
-        status: "error", success: false,
-        success: false,
-        message: "SKU not found",
-      });
-    }
-
-    let qca_sku = stmt2[0].prod_product_sku;
-
-    // CHECK PROCESS MAPPED WITH SKU
-    const stmt1 = await invtDB.query(
-      "SELECT * FROM qa_process WHERE qa_sku = :sku AND qa_process = :process",
-      {
-        replacements: { sku: qca_sku, process: req.body.qca_process },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
-
-    if (stmt1.length === 0) {
-      return res.json({
-        status: "error", success: false,
-        success: false,
-        message: "Process not assign to SKU!!!",
-      });
-    }
-
-    // CHECK LOAD SIZE
-    if (Number(req.body.numberRows) > Number(stmt1[0].lot_size)) {
-      return res.json({
-        status: "error", success: false,
-        success: false,
-        message: `Generated Qty is exceeded ( lot size ${stmt1[0].lot_size}) !!!`,
-      });
-    }
-
-    // CHECK PPR EXE QTY
-    const checkPpr = await invtDB.query(
-      "SELECT * FROM mfg_production_1 WHERE prod_transaction = :ppr",
-      {
-        replacements: { ppr: req.body.qca_ppr },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
-
-    if (
-      Number(checkPpr[0].prod_planned_qty) -
-      Number(checkPpr[0].prod_executed_qty) <
-      Number(req.body.numberRows)
-    ) {
-      return res.json({
-        status: "error", success: false,
-        success: false,
-        message: `Generated Qty is exceeded ( PPR qty ${checkPpr[0].prod_planned_qty} - ${checkPpr[0].prod_executed_qty}) !!!`,
-      });
-    }
-    // END CHECK PPR EXE QTY
-
-    let qca_subject = stmt1[0].qa_subject;
-    let level = stmt1[0].qa_process_level;
-    let from_location = stmt1[0].process_loc;
-
-    if (level > 1) {
-      return res
-        .status(500)
-        .send({ success: false, message: "Level not be grater than one" });
-    }
-
-    let to_location;
-    if (req.body.qca_result == "PASS") {
-      to_location = stmt1[0].process_pass_loc;
-    } else {
-      to_location = stmt1[0].process_fail_loc;
-    }
-
-    const transaction = await invtDB.transaction();
-    try {
-      let barcode;
-
-      const bulkInsertData = [];
-      const allBarcodes = [];
-
-      const prefix = moment().format("YYMMDDHHmmss");
-      for (let i = 0; i < req.body.numberRows; i++) {
-        barcode = prefix.toString() + Math.floor(Math.random() * 99999 + 10000);
-
-        // if (level > 1) {
-        // return res.status(500).send({ success: false, message: "Level not be grater than one" });
-        // const prevProcess = level - 1;
-        // const prevLeveldata = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_sku = :sku AND qca_process_level = :prevLevel AND qca_result = 'PASS'", {
-        //   replacements: { barcode: barcode, sku: qca_sku, prevLevel: prevProcess },
-        //   type: invtDB.QueryTypes.SELECT,
-        //   transaction: transaction,
-        // });
-
-        // if (prevLeveldata.length === 0) {
-        //   await transaction.rollback();
-        //   return res.json({ status: "error", success: false, message: "This data not be present at Previous level or Fail at previous level." });
-        // }
-        // }
-
-        allBarcodes.push(barcode);
-
-        // GET LAST PROCESS
-        // const checkData = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_process = :process AND qca_result = 'PASS' ORDER BY ID DESC LIMIT 1 ", {
-        //   replacements: {
-        //     barcode: barcode,
-        //     process: req.body.qca_process,
-        //   },
-        //   type: invtDB.QueryTypes.SELECT,
-        //   transaction: transaction,
-        // });
-
-        // if (checkData.length > 0) {
-        //   if (checkData[0].qca_result === "PASS") {
-        //     await transaction.rollback();
-        //     return res.json({ status: "error", success: false, message: "This QCA is already Pass" });
-        //   }
-        // }
-
-        bulkInsertData.push({
-          qca_barcode: barcode,
-          qca_ppr: req.body.qca_ppr,
-          qca_sku: qca_sku,
-          qca_process: req.body.qca_process,
-          qca_process_level: level,
-          qca_bom_id: qca_subject,
-          qca_result: req.body.qca_result,
-          qca_fail_reason: req.body.failReason ?? "--",
-          qca_correction: req.body.correction ?? "--",
-          qca_from_loc: from_location,
-          qca_to_loc: to_location,
-          qca_insert_by: req.logedINUser,
-          qca_insertdt: moment().format("YYYY-MM-DD HH:mm:ss"),
-        });
-
-        // const result = await invtDB.query(
-        //   "INSERT INTO qca (qca_barcode, qca_ppr, qca_sku, qca_process, qca_process_level, qca_bom_id, qca_result, qca_fail_reason, qca_correction, qca_from_loc, qca_to_loc, qca_insert_by, qca_insertdt) VALUES (:qca_barcode, :qca_ppr, :qca_sku, :qca_process, :qca_process_level, :qca_bom_id, :qca_result, :qca_fail_reason, :correction, :from_loc, :to_loc, :insert_by, :insert_dt )",
-        //   {
-        //     replacements: {
-        //       qca_barcode: barcode,
-        //       qca_ppr: req.body.qca_ppr,
-        //       qca_sku: qca_sku,
-        //       qca_process: req.body.qca_process,
-        //       qca_process_level: level,
-        //       qca_bom_id: qca_subject,
-        //       qca_result: req.body.qca_result,
-        //       qca_fail_reason: req.body.failReason ?? "--",
-        //       qca_correction: req.body.correction ?? "--",
-        //       qca_from_loc: from_location,
-        //       qca_to_loc: to_location,
-        //       qca_insert_by: req.logedINUser,
-        //       qca_insertdt: moment().format("YYYY-MM-DD HH:mm:ss"),
-        //     },
-        //     type: invtDB.QueryTypes.INSERT,
-        //     transaction: transaction,
-        //   }
-        // );
-
-        // if (result.length === 0) {
-        //   await transaction.rollback();
-        //   return res.json({ status: "error", success: false, message: "Failed to added data" });
-        // }
-        //
-      }
-
-      const checkData = await invtDB.query(
-        "SELECT * FROM qca WHERE qca_barcode IN (:barcode) AND qca_process = :process AND qca_result = 'PASS' ORDER BY ID DESC LIMIT 1 ",
-        {
-          replacements: {
-            barcode: allBarcodes,
-            process: req.body.qca_process,
-          },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: transaction,
-        }
-      );
-
-      if (checkData.length > 0) {
-        await transaction.rollback();
-        return res.json({
-          status: "error", success: false,
-          success: false,
-          message: "This QCA is already Pass",
-        });
-      }
-
-      await invtDB
-        .getQueryInterface()
-        .bulkInsert("qca", bulkInsertData, { transaction: transaction });
-
-      await transaction.commit();
-      return res.json({ success: true, message: "QCA CREATED successfully" });
-    } catch (e) {
-      return helper.errorResponse(res, e);
-    }
+    await transaction.commit();
+    return res.json({ success: true, message: "QCA CREATED successfully" });
+  } catch (e) {
+    return helper.errorResponse(res, e);
   }
-);
+});
 
 // CREATE QCA PROCESS
 router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
@@ -246,24 +228,23 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
   }
 
   //Get SKU from PPR No.
-  const stmt2 = await invtDB.query(
-    "SELECT prod_product_sku FROM mfg_production_1 WHERE prod_transaction = :ppr",
-    {
-      replacements: { ppr: req.body.qca_ppr },
-      type: invtDB.QueryTypes.SELECT,
-    }
-  );
+  const stmt2 = await invtDB.query("SELECT prod_product_sku FROM mfg_production_1 WHERE prod_transaction = :ppr", {
+    replacements: { ppr: req.body.qca_ppr },
+    type: invtDB.QueryTypes.SELECT,
+  });
 
   if (stmt2.length === 0) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: "SKU not found",
     });
@@ -272,17 +253,15 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
   let qca_sku = stmt2[0].prod_product_sku;
 
   // CHECK PROCESS MAPPED WITH SKU
-  const stmt1 = await invtDB.query(
-    "SELECT qa_subject, qa_process_level, process_loc, process_pass_loc, process_fail_loc FROM qa_process WHERE qa_sku = :sku AND qa_process = :process",
-    {
-      replacements: { sku: qca_sku, process: req.body.qca_process },
-      type: invtDB.QueryTypes.SELECT,
-    }
-  );
+  const stmt1 = await invtDB.query("SELECT qa_subject, qa_process_level, process_loc, process_pass_loc, process_fail_loc FROM qa_process WHERE qa_sku = :sku AND qa_process = :process", {
+    replacements: { sku: qca_sku, process: req.body.qca_process },
+    type: invtDB.QueryTypes.SELECT,
+  });
 
   if (stmt1.length === 0) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: "Process not assign to SKU!!!",
     });
@@ -304,48 +283,43 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
   try {
     if (level > 1) {
       const prevProcess = level - 1;
-      const prevLeveldata = await invtDB.query(
-        "SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_sku = :sku AND qca_process_level = :prevLevel AND qca_result = 'PASS'",
-        {
-          replacements: {
-            barcode: req.body.bar_code,
-            sku: qca_sku,
-            prevLevel: prevProcess,
-          },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: transaction,
-        }
-      );
+      const prevLeveldata = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_sku = :sku AND qca_process_level = :prevLevel AND qca_result = 'PASS'", {
+        replacements: {
+          barcode: req.body.bar_code,
+          sku: qca_sku,
+          prevLevel: prevProcess,
+        },
+        type: invtDB.QueryTypes.SELECT,
+        transaction: transaction,
+      });
 
       if (prevLeveldata.length === 0) {
         await transaction.rollback();
         return res.json({
-          status: "error", success: false,
+          status: "error",
           success: false,
-          message:
-            "This data not be present at Previous level or Fail at previous level.",
+          success: false,
+          message: "This data not be present at Previous level or Fail at previous level.",
         });
       }
     }
 
     // GET LAST PROCESS
-    const checkData = await invtDB.query(
-      "SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_process = :process ORDER BY ID DESC LIMIT 1 ",
-      {
-        replacements: {
-          barcode: req.body.bar_code,
-          process: req.body.qca_process,
-        },
-        type: invtDB.QueryTypes.SELECT,
-        transaction: transaction,
-      }
-    );
+    const checkData = await invtDB.query("SELECT * FROM qca WHERE qca_barcode = :barcode AND qca_process = :process ORDER BY ID DESC LIMIT 1 ", {
+      replacements: {
+        barcode: req.body.bar_code,
+        process: req.body.qca_process,
+      },
+      type: invtDB.QueryTypes.SELECT,
+      transaction: transaction,
+    });
 
     if (checkData.length > 0) {
       if (checkData[0].qca_result === "PASS") {
         await transaction.rollback();
         return res.json({
-          status: "error", success: false,
+          status: "error",
+          success: false,
           success: false,
           message: "This QCA is already Pass",
         });
@@ -371,13 +345,14 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
         },
         type: invtDB.QueryTypes.INSERT,
         transaction: transaction,
-      }
+      },
     );
 
     if (result.length === 0) {
       await transaction.rollback();
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "Failed to added data",
       });
@@ -385,7 +360,8 @@ router.post("/insert_qca_Process", [auth.isAuthorized], async (req, res) => {
 
     await transaction.commit();
     return res.json({
-      status: "success", success: true,
+      status: "success",
+      success: true,
       success: true,
       message: "Data has been successfully added",
     });
@@ -403,20 +379,18 @@ router.post("/fetch_testing_data", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
   }
 
   try {
-    const stmt = await invtDB.query(
-      "SELECT * FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND lot_no = '' ",
-      {
-        replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const stmt = await invtDB.query("SELECT * FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND lot_no = '' ", {
+      replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     let result = [];
     for (let i = 0; i < stmt.length; i++) {
@@ -443,7 +417,8 @@ router.post("/delete_testing_data", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -490,12 +465,7 @@ router.post("/delete_testing_data", [auth.isAuthorized], async (req, res) => {
     }, {});
 
     // Construct IN clause with indexed placeholders
-    const inClause = barcodes
-      .map(
-        (_, index) =>
-          `(:sku${index}, :bar_code${index}, :process${index}, :result${index})`
-      )
-      .join(", ");
+    const inClause = barcodes.map((_, index) => `(:sku${index}, :bar_code${index}, :process${index}, :result${index})`).join(", ");
 
     // Query to check the existence of records
     const selectQuery = `
@@ -527,14 +497,16 @@ router.post("/delete_testing_data", [auth.isAuthorized], async (req, res) => {
 
       await transaction.commit();
       return res.json({
-        status: "success", success: true,
+        status: "success",
+        success: true,
         success: true,
         message: "Data deleted successfully",
       });
     } else {
       await transaction.rollback();
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "Failed to delete data",
       });
@@ -550,21 +522,15 @@ router.post("/getPprNo", [auth.isAuthorized], async (req, res) => {
     const limit = 10;
     let stmt;
     if (req.body.searchTerm) {
-      stmt = await invtDB.query(
-        "SELECT prod_transaction FROM mfg_production_1 WHERE mfg_production_1.phase1_status = 'A' AND prod_transaction LIKE :search ORDER BY ID ASC LIMIT :limit",
-        {
-          replacements: { search: `%${req.body.searchTerm}%`, limit: limit },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      stmt = await invtDB.query("SELECT prod_transaction FROM mfg_production_1 WHERE mfg_production_1.phase1_status = 'A' AND prod_transaction LIKE :search ORDER BY ID ASC LIMIT :limit", {
+        replacements: { search: `%${req.body.searchTerm}%`, limit: limit },
+        type: invtDB.QueryTypes.SELECT,
+      });
     } else {
-      stmt = await invtDB.query(
-        "SELECT prod_transaction FROM mfg_production_1 WHERE mfg_production_1.phase1_status = 'A' ORDER BY ID ASC LIMIT :limit",
-        {
-          replacements: { limit: limit },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      stmt = await invtDB.query("SELECT prod_transaction FROM mfg_production_1 WHERE mfg_production_1.phase1_status = 'A' ORDER BY ID ASC LIMIT :limit", {
+        replacements: { limit: limit },
+        type: invtDB.QueryTypes.SELECT,
+      });
     }
 
     if (stmt.length > 0) {
@@ -578,14 +544,16 @@ router.post("/getPprNo", [auth.isAuthorized], async (req, res) => {
       }
 
       return res.json({
-        status: "success", success: true,
+        status: "success",
+        success: true,
         success: true,
         message: "Data fetched successfully",
         data: final,
       });
     } else {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "No Data Found",
       });
@@ -604,7 +572,8 @@ router.post("/qca_scan_counts", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -612,31 +581,22 @@ router.post("/qca_scan_counts", [auth.isAuthorized], async (req, res) => {
 
   try {
     // Get total scan count for the provided PPR
-    const totalScanCount = await invtDB.query(
-      "SELECT COUNT(*) as total FROM qca WHERE qca_ppr = :ppr AND qca_process = :process",
-      {
-        replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const totalScanCount = await invtDB.query("SELECT COUNT(*) as total FROM qca WHERE qca_ppr = :ppr AND qca_process = :process", {
+      replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     // Get passed list for the provided PPR
-    const passedCount = await invtDB.query(
-      "SELECT COUNT(*) as passed FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND qca_result = 'PASS'",
-      {
-        replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const passedCount = await invtDB.query("SELECT COUNT(*) as passed FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND qca_result = 'PASS'", {
+      replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     // Get failed list for the provided PPR
-    const failedCount = await invtDB.query(
-      "SELECT COUNT(*) as failed FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND qca_result = 'FAIL'",
-      {
-        replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const failedCount = await invtDB.query("SELECT COUNT(*) as failed FROM qca WHERE qca_ppr = :ppr AND qca_process = :process AND qca_result = 'FAIL'", {
+      replacements: { ppr: req.body.qca_ppr, process: req.body.qca_process },
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     return res.json({
       totalScans: totalScanCount[0].total,
@@ -645,10 +605,10 @@ router.post("/qca_scan_counts", [auth.isAuthorized], async (req, res) => {
     });
   } catch {
     return res.json({
-      status: "error", success: false,
+      status: "error",
       success: false,
-      message:
-        "Internal Error<br/>If this condition persists, contact your system administrator",
+      success: false,
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
       ...(process.env.NODE_ENV === "development" && { debug: err.stack }),
     });
   }
@@ -664,7 +624,8 @@ router.post("/fetchPassedPCB", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -685,12 +646,13 @@ router.post("/fetchPassedPCB", [auth.isAuthorized], async (req, res) => {
           date2: date2,
         },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
 
     if (stmtPass.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "No Data Found",
       });
@@ -700,13 +662,10 @@ router.post("/fetchPassedPCB", [auth.isAuthorized], async (req, res) => {
     for (let i = 0; i < stmtPass.length; i++) {
       let barcodedata = [];
 
-      const barcodesForLot = await invtDB.query(
-        "SELECT qca_barcode, qca_insertdt FROM qca WHERE lot_no = :lotNo",
-        {
-          replacements: { lotNo: stmtPass[i].lot_no },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      const barcodesForLot = await invtDB.query("SELECT qca_barcode, qca_insertdt FROM qca WHERE lot_no = :lotNo", {
+        replacements: { lotNo: stmtPass[i].lot_no },
+        type: invtDB.QueryTypes.SELECT,
+      });
 
       for (const barcode of barcodesForLot) {
         barcodedata.push({
@@ -729,7 +688,8 @@ router.post("/fetchPassedPCB", [auth.isAuthorized], async (req, res) => {
     }
 
     return res.json({
-      status: "success", success: true,
+      status: "success",
+      success: true,
       success: true,
       message: "Data fetched successfully",
       data: result,
@@ -749,7 +709,8 @@ router.post("/fetchFailedPCB", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -770,12 +731,13 @@ router.post("/fetchFailedPCB", [auth.isAuthorized], async (req, res) => {
           date2: date2,
         },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
 
     if (stmtFail.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "No Data Found",
       });
@@ -785,13 +747,10 @@ router.post("/fetchFailedPCB", [auth.isAuthorized], async (req, res) => {
     for (let i = 0; i < stmtFail.length; i++) {
       let barcodedata = [];
 
-      const barcodesForLot = await invtDB.query(
-        "SELECT qca_barcode, qca_insertdt, defect_name FROM qca LEFT JOIN defect_type ON qca.qca_fail_reason = defect_type.problem_key WHERE lot_no = :lotNo",
-        {
-          replacements: { lotNo: stmtFail[i].lot_no },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      const barcodesForLot = await invtDB.query("SELECT qca_barcode, qca_insertdt, defect_name FROM qca LEFT JOIN defect_type ON qca.qca_fail_reason = defect_type.problem_key WHERE lot_no = :lotNo", {
+        replacements: { lotNo: stmtFail[i].lot_no },
+        type: invtDB.QueryTypes.SELECT,
+      });
 
       for (const barcode of barcodesForLot) {
         barcodedata.push({
@@ -815,7 +774,8 @@ router.post("/fetchFailedPCB", [auth.isAuthorized], async (req, res) => {
     }
 
     return res.json({
-      status: "success", success: true,
+      status: "success",
+      success: true,
       success: true,
       message: "Data fetched successfully",
       data: result,
@@ -833,22 +793,21 @@ router.post("/insertDefectType", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
   } else {
-    const check = await invtDB.query(
-      "SELECT * FROM defect_type WHERE defect_name = ? ",
-      {
-        replacements: [req.body.defect_name],
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const check = await invtDB.query("SELECT * FROM defect_type WHERE defect_name = ? ", {
+      replacements: [req.body.defect_name],
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     if (check.length > 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "Defect type already exists",
       });
@@ -856,21 +815,19 @@ router.post("/insertDefectType", [auth.isAuthorized], async (req, res) => {
   }
 
   try {
-    const result = await invtDB.query(
-      "INSERT INTO defect_type (problem_key, defect_name, insert_by, insert_dt) VALUES (:key, :defect_name , :insert_by , :insert_dt)",
-      {
-        replacements: {
-          key: helper.getUniqueNumber(),
-          defect_name: req.body.defect_name,
-          insert_by: req.logedINUser,
-          insert_dt: moment().format("YYYY-MM-DD HH:mm:ss"),
-        },
-        type: invtDB.QueryTypes.INSERT,
-      }
-    );
+    const result = await invtDB.query("INSERT INTO defect_type (problem_key, defect_name, insert_by, insert_dt) VALUES (:key, :defect_name , :insert_by , :insert_dt)", {
+      replacements: {
+        key: helper.getUniqueNumber(),
+        defect_name: req.body.defect_name,
+        insert_by: req.logedINUser,
+        insert_dt: moment().format("YYYY-MM-DD HH:mm:ss"),
+      },
+      type: invtDB.QueryTypes.INSERT,
+    });
 
     return res.json({
-      status: "success", success: true,
+      status: "success",
+      success: true,
       success: true,
       message: "Defect type added",
     });
@@ -882,16 +839,14 @@ router.post("/insertDefectType", [auth.isAuthorized], async (req, res) => {
 //fetch defect_name
 router.get("/getDefectNames", [auth.isAuthorized], async (req, res) => {
   try {
-    const defectNames = await invtDB.query(
-      "SELECT problem_key,defect_name FROM defect_type",
-      {
-        type: invtDB.QueryTypes.SELECT,
-      }
-    );
+    const defectNames = await invtDB.query("SELECT problem_key,defect_name FROM defect_type", {
+      type: invtDB.QueryTypes.SELECT,
+    });
 
     if (defectNames.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "No defect names found",
       });
@@ -911,7 +866,8 @@ router.post("/fetchPprDetails", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: helper.firstErrorValidatorjs(validation),
     });
@@ -923,7 +879,7 @@ router.post("/fetchPprDetails", [auth.isAuthorized], async (req, res) => {
       {
         replacements: { ppr_no: req.body.ppr_no },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
 
     if (main_stmt.length > 0) {
@@ -944,7 +900,7 @@ router.post("/fetchPprDetails", [auth.isAuthorized], async (req, res) => {
             branch: req.branch,
           },
           type: invtDB.QueryTypes.SELECT,
-        }
+        },
       );
       let username;
       if (stmt0.length > 0) {
@@ -953,49 +909,40 @@ router.post("/fetchPprDetails", [auth.isAuthorized], async (req, res) => {
         username = stmt0[0].user_name;
       } else {
         return res.json({
-          status: "error", success: false,
+          status: "error",
+          success: false,
           success: false,
           message: "unable to fetch total req qty",
         });
       }
 
-      let remaining_qty =
-        helper.number(totalReqQTY) - helper.number(totalExeQTY);
+      let remaining_qty = helper.number(totalReqQTY) - helper.number(totalExeQTY);
 
       // SCANNED QTY
-      const scanStmt = await invtDB.query(
-        "SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr",
-        {
-          replacements: { ppr: req.body.ppr_no },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      const scanStmt = await invtDB.query("SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr", {
+        replacements: { ppr: req.body.ppr_no },
+        type: invtDB.QueryTypes.SELECT,
+      });
       let scanned_qty = 0;
       if (scanStmt.length > 0) {
         scanned_qty = scanStmt[0].scanned_qty;
       }
 
       // PASSED QTY
-      const passStmt = await invtDB.query(
-        "SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr AND qca_result = 'PASS'",
-        {
-          replacements: { ppr: req.body.ppr_no },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      const passStmt = await invtDB.query("SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr AND qca_result = 'PASS'", {
+        replacements: { ppr: req.body.ppr_no },
+        type: invtDB.QueryTypes.SELECT,
+      });
       let passed_qty = 0;
       if (passStmt.length > 0) {
         passed_qty = passStmt[0].scanned_qty;
       }
 
       // FAILED QTY
-      const failStmt = await invtDB.query(
-        "SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr AND qca_result = 'FAIL'",
-        {
-          replacements: { ppr: req.body.ppr_no },
-          type: invtDB.QueryTypes.SELECT,
-        }
-      );
+      const failStmt = await invtDB.query("SELECT COALESCE(count(ID), 0) AS scanned_qty FROM qca WHERE qca_ppr = :ppr AND qca_result = 'FAIL'", {
+        replacements: { ppr: req.body.ppr_no },
+        type: invtDB.QueryTypes.SELECT,
+      });
       let failed_qty = 0;
       if (failStmt.length > 0) {
         failed_qty = failStmt[0].scanned_qty;
@@ -1011,16 +958,14 @@ router.post("/fetchPprDetails", [auth.isAuthorized], async (req, res) => {
         product_name: main_stmt[0].p_name,
         product_sku: main_stmt[0].prod_product_sku,
         access_token: main_stmt[0].ppr_randomcode,
-        status:
-          helper.number(totalExeQTY) < helper.number(totalReqQTY)
-            ? "pending"
-            : "completed",
+        status: helper.number(totalExeQTY) < helper.number(totalReqQTY) ? "pending" : "completed",
       };
 
       return res.json({ status: "success", success: true, data: result });
     } else {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "no any records found",
       });
@@ -1038,7 +983,8 @@ router.post("/getQAProcesses", [auth.isAuthorized], async (req, res) => {
 
   if (validation.fails()) {
     return res.json({
-      status: "error", success: false,
+      status: "error",
+      success: false,
       success: false,
       message: "Please provide sku",
     });
@@ -1050,19 +996,21 @@ router.post("/getQAProcesses", [auth.isAuthorized], async (req, res) => {
       {
         replacements: { sku: req.body.sku },
         type: invtDB.QueryTypes.SELECT,
-      }
+      },
     );
 
     if (processes.length === 0) {
       return res.json({
-        status: "error", success: false,
+        status: "error",
+        success: false,
         success: false,
         message: "No processes found for the provided SKU",
       });
     }
 
     return res.json({
-      status: "success", success: true,
+      status: "success",
+      success: true,
       success: true,
       message: "Data fetched successfully",
       data: processes,
@@ -1109,19 +1057,16 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
     let Lot_size = stmt2[0].lot_size;
 
     //Update Lot NO.
-    const updateResult = await invtDB.query(
-      "UPDATE qca SET lot_no = :lotNo WHERE qca_barcode IN (:qca_barcode) AND qca_result = :result AND qca_process = :process",
-      {
-        replacements: {
-          lotNo: lot_no,
-          qca_barcode: req.body.qca_barcode,
-          result: req.body.result,
-          process: req.body.process,
-        },
-        type: invtDB.QueryTypes.UPDATE,
-        transaction: transaction,
+    const updateResult = await invtDB.query("UPDATE qca SET lot_no = :lotNo WHERE qca_barcode IN (:qca_barcode) AND qca_result = :result AND qca_process = :process", {
+      replacements: {
+        lotNo: lot_no,
+        qca_barcode: req.body.qca_barcode,
+        result: req.body.result,
+        process: req.body.process,
       },
-    );
+      type: invtDB.QueryTypes.UPDATE,
+      transaction: transaction,
+    });
 
     let consump_Loc = stmt2[0].process_loc;
 
@@ -1151,7 +1096,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           req: req.body.ppr_transaction,
           access: req.body.accesstoken,
-          branch: "BRALWR36",
+          branch: "BROAKTRC25",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1174,9 +1119,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           },
         );
         if (stmt0.length > 0) {
-          MaxConsumptQtyis =
-            helper.number(row.prod_planned_qty) -
-            helper.number(stmt0[0].totalYetConsupted);
+          MaxConsumptQtyis = helper.number(row.prod_planned_qty) - helper.number(stmt0[0].totalYetConsupted);
           if (helper.number(MaxConsumptQtyis) < helper.number(lot_qty)) {
             await transaction.rollback();
             return res.json({
@@ -1203,7 +1146,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           sku: req.body.skucode,
           transaction: req.body.ppr_transaction,
           accesstoken: req.body.accesstoken,
-          branch: "BRALWR36",
+          branch: "BROAKTRC25",
         },
         type: invtDB.QueryTypes.SELECT,
       },
@@ -1211,51 +1154,36 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
     if (stmt1.length > 0) {
       let mfg_transaction;
-      let getNumber = await invtDB.query(
-        "SELECT * FROM ims_numbering WHERE for_number = 'MFG' FOR UPDATE",
-        {
-          type: invtDB.QueryTypes.SELECT,
-          transaction: transaction,
-        },
-      );
+      let getNumber = await invtDB.query("SELECT * FROM ims_numbering WHERE for_number = 'MFG' FOR UPDATE", {
+        type: invtDB.QueryTypes.SELECT,
+        transaction: transaction,
+      });
 
       mfg_transaction = stmt2[0].mfg_transaction;
       if (getNumber.length > 0) {
         var suffix = getNumber[0].suffix;
         suffix = parseInt(suffix) + 1;
         suffix = suffix.toString();
-        suffix = suffix.padStart(
-          parseInt(getNumber[0].number_length_limit),
-          "0",
-        );
+        suffix = suffix.padStart(parseInt(getNumber[0].number_length_limit), "0");
 
-        mfg_transaction =
-          getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
+        mfg_transaction = getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
       } else {
-        let currYear = parseInt(
-          new Date().getFullYear().toString().substr(2, 2),
-        );
+        let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
         mfg_transaction = "MFG/" + currYear + "-" + (currYear + 1) + "/0001";
       }
 
-      await invtDB.query(
-        "UPDATE ims_numbering SET suffix = suffix+1 WHERE for_number= 'MFG'",
-        {
-          type: invtDB.QueryTypes.UPDATE,
-          transaction: transaction,
-        },
-      );
+      await invtDB.query("UPDATE ims_numbering SET suffix = suffix+1 WHERE for_number= 'MFG'", {
+        type: invtDB.QueryTypes.UPDATE,
+        transaction: transaction,
+      });
 
-      let stmt3 = await invtDB.query(
-        "SELECT * FROM mfg_production_2 WHERE mfg_ref_id = :pprid AND mfg_sku = :sku ORDER BY ID DESC LIMIT 1",
-        {
-          replacements: {
-            pprid: req.body.ppr_transaction,
-            sku: sku_sfg,
-          },
-          type: invtDB.QueryTypes.SELECT,
+      let stmt3 = await invtDB.query("SELECT * FROM mfg_production_2 WHERE mfg_ref_id = :pprid AND mfg_sku = :sku ORDER BY ID DESC LIMIT 1", {
+        replacements: {
+          pprid: req.body.ppr_transaction,
+          sku: sku_sfg,
         },
-      );
+        type: invtDB.QueryTypes.SELECT,
+      });
 
       let stepcount;
       if (stmt3.length > 0) {
@@ -1265,16 +1193,13 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
       }
 
       let pprcreatedBY;
-      let stmt4 = await invtDB.query(
-        "SELECT * FROM mfg_production_1 WHERE prod_product_sku = :sku AND prod_transaction = :pprid ORDER BY ID DESC LIMIT 1",
-        {
-          replacements: {
-            pprid: req.body.ppr_transaction,
-            sku: req.body.skucode,
-          },
-          type: invtDB.QueryTypes.SELECT,
+      let stmt4 = await invtDB.query("SELECT * FROM mfg_production_1 WHERE prod_product_sku = :sku AND prod_transaction = :pprid ORDER BY ID DESC LIMIT 1", {
+        replacements: {
+          pprid: req.body.ppr_transaction,
+          sku: req.body.skucode,
         },
-      );
+        type: invtDB.QueryTypes.SELECT,
+      });
       if (stmt4.length > 0) {
         pprcreatedBY = stmt4[0].prod_inserted_by;
       } else {
@@ -1282,13 +1207,10 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
       }
 
       //Get SKU type
-      let skutype = await invtDB.query(
-        "SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg",
-        {
-          replacements: { skusfg: sku_sfg },
-          type: invtDB.QueryTypes.SELECT,
-        },
-      );
+      let skutype = await invtDB.query("SELECT bom_recipe_type , sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :skusfg", {
+        replacements: { skusfg: sku_sfg },
+        type: invtDB.QueryTypes.SELECT,
+      });
 
       let sku_type;
 
@@ -1310,7 +1232,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRALWR36",
+              branch: "BROAKTRC25",
               lot_qty: lot_qty,
               sku: sku_sfg,
               sku_type: sku_type,
@@ -1338,7 +1260,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               txn_session: helper.generateTxnSession(),
-              branch: "BRALWR36",
+              branch: "BROAKTRC25",
               sku: sku_sfg,
               lot_qty: lot_qty,
               location: send_Loc,
@@ -1356,13 +1278,10 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
         //Insert data into rm_location
         if (stmt1.length > 0) {
-          let bomComponents = await invtDB.query(
-            "SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ",
-            {
-              replacements: { bomid: bom_id },
-              type: invtDB.QueryTypes.SELECT,
-            },
-          );
+          let bomComponents = await invtDB.query("SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ", {
+            replacements: { bomid: bom_id },
+            type: invtDB.QueryTypes.SELECT,
+          });
 
           // Pre-fetch avg rates + inward/outward for all components in parallel
           const componentData = await Promise.all(
@@ -1372,9 +1291,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               const [avgRate, inwardRows, outwardRows] = await Promise.all([
                 // require("../../../../helper/utils/avgRate")
                 //   .getWeightedPurchaseRate_May2026(comp.component_id),
-                require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
-                  comp.component_id,
-                ),
+                require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(comp.component_id),
                 // ALL INWARD at consumption location
                 invtDB.query(
                   `SELECT COALESCE(SUM(qty + other_qty), 0) AS Inward
@@ -1407,45 +1324,28 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
                 ),
               ]);
 
-              const inward = inwardRows.length
-                ? helper.number(inwardRows[0].Inward)
-                : 0;
-              const outward = outwardRows.length
-                ? helper.number(outwardRows[0].Outward)
-                : 0;
+              const inward = inwardRows.length ? helper.number(inwardRows[0].Inward) : 0;
+              const outward = outwardRows.length ? helper.number(outwardRows[0].Outward) : 0;
 
               return { comp, consumption_quantity, avgRate, inward, outward };
             }),
           );
 
           // ── 8. Stock validation then serial inserts (must stay serial — tx) ────
-          for (const {
-            comp,
-            consumption_quantity,
-            avgRate,
-            inward,
-            outward,
-          } of componentData) {
+          for (const { comp, consumption_quantity, avgRate, inward, outward } of componentData) {
             productAvgRate += avgRate * comp.qty;
 
             if (helper.number(consumption_quantity) <= 0) continue;
 
             // Stock check
-            if (
-              helper.number(inward - outward) <
-              helper.number(consumption_quantity)
-            ) {
+            if (helper.number(inward - outward) < helper.number(consumption_quantity)) {
               const [compInfo] = await Promise.all([
-                invtDB.query(
-                  `SELECT c_name, c_part_no FROM components WHERE component_key = :component`,
-                  {
-                    replacements: { component: comp.component_id },
-                    type: invtDB.QueryTypes.SELECT,
-                  },
-                ),
+                invtDB.query(`SELECT c_name, c_part_no FROM components WHERE component_key = :component`, {
+                  replacements: { component: comp.component_id },
+                  type: invtDB.QueryTypes.SELECT,
+                }),
               ]);
-              const component_name =
-                compInfo[0]?.c_part_no ?? comp.component_id;
+              const component_name = compInfo[0]?.c_part_no ?? comp.component_id;
               await transaction.rollback();
               return res.json({
                 status: "error",
@@ -1468,7 +1368,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               {
                 replacements: {
                   txn_session: helper.generateTxnSession(),
-                  branch: "BRALWR36",
+                  branch: "BROAKTRC25",
                   component: comp.component_id,
                   qty: consumption_quantity,
                   bom_qty: comp.qty,
@@ -1522,13 +1422,10 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           let sfg_mapped_rm = skutype[0]?.sfg_mapped_rm;
 
           if (!sfg_mapped_rm) {
-            const skutypeFallback = await invtDB.query(
-              "SELECT sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :sku LIMIT 1",
-              {
-                replacements: { sku: req.body.skucode },
-                type: invtDB.QueryTypes.SELECT,
-              },
-            );
+            const skutypeFallback = await invtDB.query("SELECT sfg_mapped_rm FROM bom_recipe WHERE bom_product_sku = :sku LIMIT 1", {
+              replacements: { sku: req.body.skucode },
+              type: invtDB.QueryTypes.SELECT,
+            });
             sfg_mapped_rm = skutypeFallback[0]?.sfg_mapped_rm;
           }
 
@@ -1542,21 +1439,12 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           }
 
           const [sfgComp, godownTxnRow, qcaNumberRow] = await Promise.all([
-            invtDB.query(
-              `SELECT component_key FROM components WHERE component_key = :component`,
-              {
-                replacements: { component: sfg_mapped_rm },
-                type: invtDB.QueryTypes.SELECT,
-              },
-            ),
-            invtDB.query(
-              `SELECT * FROM ims_numbering WHERE for_number = 'GODOWN_TRANSFER' FOR UPDATE`,
-              { type: invtDB.QueryTypes.SELECT, transaction },
-            ),
-            invtDB.query(
-              `SELECT * FROM ims_numbering WHERE for_number = 'QCA' FOR UPDATE`,
-              { type: invtDB.QueryTypes.SELECT, transaction },
-            ),
+            invtDB.query(`SELECT component_key FROM components WHERE component_key = :component`, {
+              replacements: { component: sfg_mapped_rm },
+              type: invtDB.QueryTypes.SELECT,
+            }),
+            invtDB.query(`SELECT * FROM ims_numbering WHERE for_number = 'GODOWN_TRANSFER' FOR UPDATE`, { type: invtDB.QueryTypes.SELECT, transaction }),
+            invtDB.query(`SELECT * FROM ims_numbering WHERE for_number = 'QCA' FOR UPDATE`, { type: invtDB.QueryTypes.SELECT, transaction }),
           ]);
 
           if (sfgComp.length <= 0) {
@@ -1571,62 +1459,43 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           // Build GODOWN_TRANSFER transaction ID
           let transactionID;
           if (godownTxnRow.length > 0) {
-            const suffix = (helper.number(godownTxnRow[0].suffix) + 1)
-              .toString()
-              .padStart(
-                helper.number(godownTxnRow[0].number_length_limit),
-                "0",
-              );
+            const suffix = (helper.number(godownTxnRow[0].suffix) + 1).toString().padStart(helper.number(godownTxnRow[0].number_length_limit), "0");
             transactionID = `${godownTxnRow[0].prefix}/${godownTxnRow[0].session}/${suffix}`;
           } else {
-            const currYear = parseInt(
-              new Date().getFullYear().toString().substr(2, 2),
-            );
+            const currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
             transactionID = `IGA/${currYear}-${currYear + 1}/0001`;
           }
 
           // CREATE NEW SFG AS COMPONENT
-          let getNumber = await invtDB.query(
-            "SELECT * FROM `ims_numbering` WHERE `for_number` = 'QCA' FOR UPDATE",
-            {
-              type: invtDB.QueryTypes.SELECT,
-              transaction: transaction,
-            },
-          );
+          let getNumber = await invtDB.query("SELECT * FROM `ims_numbering` WHERE `for_number` = 'QCA' FOR UPDATE", {
+            type: invtDB.QueryTypes.SELECT,
+            transaction: transaction,
+          });
           var in_txn_no;
 
           if (getNumber.length > 0) {
             var suffix = getNumber[0].suffix;
             suffix = parseInt(suffix) + 1;
             suffix = suffix.toString();
-            suffix = suffix.padStart(
-              parseInt(getNumber[0].number_length_limit),
-              "0",
-            );
+            suffix = suffix.padStart(parseInt(getNumber[0].number_length_limit), "0");
 
-            in_txn_no =
-              getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
+            in_txn_no = getNumber[0].prefix + "/" + getNumber[0].session + "/" + suffix;
           } else {
-            let currYear = parseInt(
-              new Date().getFullYear().toString().substr(2, 2),
-            );
+            let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
             in_txn_no = "QCA/" + currYear + "-" + (currYear + 1) + "/0001";
           }
 
-          await invtDB.query(
-            "UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'QCA'",
-            {
-              type: invtDB.QueryTypes.UPDATE,
-              transaction: transaction,
-            },
-          );
+          await invtDB.query("UPDATE `ims_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'QCA'", {
+            type: invtDB.QueryTypes.UPDATE,
+            transaction: transaction,
+          });
 
           let stmt_new_comp = await invtDB.query(
             "INSERT INTO rm_location (txn_session,in_module,company_branch,components_id,qty,loc_in,any_remark,insert_date,insert_by,in_transaction_id, in_po_rate) VALUES (:txn_session,'IN-QCA',:branch,:component,:qty,:loc_in,:remark,:insert_date,:insert_by,:in_transaction_id, :in_po_rate)",
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRALWR36",
+                branch: "BROAKTRC25",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 in_po_rate: productAvgRate,
@@ -1648,7 +1517,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
             {
               replacements: {
                 txn_session: helper.generateTxnSession(),
-                branch: "BRALWR36",
+                branch: "BROAKTRC25",
                 component: sfgComp[0].component_key,
                 qty: lot_qty,
                 loc_in: send_Loc,

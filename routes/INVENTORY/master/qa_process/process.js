@@ -354,7 +354,7 @@ router.post("/updateMappedQAProcess", [auth.isAuthorized], async (req, res) => {
   const valid = new Validator(req.body, {
     sku: "required",
     sfg_sku: "required|array",
-    process: "required|array",
+    // process: "required|array",
   });
 
   if (valid.fails()) {

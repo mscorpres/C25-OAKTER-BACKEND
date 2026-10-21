@@ -200,7 +200,7 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
 
     let checkPermission = await invtDB.query(
       `SELECT CustID FROM admin_login 
-       WHERE CustID IN ('CRN9560637','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
+       WHERE CustID IN ('CRN9560637','CRN5981990','CRN103522','CRN0581783','CRN301718','CRN919551','CRN991091','CRN710830','CRN7494602') 
        AND CustID = :userCustID`,
       {
         replacements: { userCustID: req.logedINUser },
@@ -284,6 +284,20 @@ router.post("/addComponent/:type", [auth.isAuthorized], async (req, res) => {
         status: "error",
         success: false,
         message: "Part no already exists",
+      });
+    }
+
+    const altPartCheck = await invtDB.query(
+      "SELECT 1 FROM components WHERE c_new_part_no = ?",
+      { replacements: [new_partno], type: invtDB.QueryTypes.SELECT, transaction: tx1 }
+    );
+
+    if (altPartCheck.length > 0) {
+      await Promise.all([tx1.rollback(), tx2.rollback()]);
+      return res.json({
+        status: "error",
+        success: false,
+        message: "Alt Part no already exists",
       });
     }
 

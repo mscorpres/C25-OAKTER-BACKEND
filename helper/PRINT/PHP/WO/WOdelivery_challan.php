@@ -128,13 +128,13 @@
             //$wo_transaction_id = $result['wo_transaction'];
             $wo_reg_date = date("d-M-Y", strtotime($result['wo_insert_dt']));
                 
-            $dispatch_from = "Riot Labz Private Limited";
-            $dispatch_from_addr_1 = "HO: D-57, 2nd Floor, Sector-6, Noida -201301";
-            $dispatch_from_addr_2 = "WH: A21, Phase II, Hosiery Complex, Noida -201305";
+            $dispatch_from = "RIOT LABZ PRIVATE LIMITED";
+            $dispatch_from_addr_1 = "C-25, Hosiery Complex Phase 2, Hosiery Complex,";
+            $dispatch_from_addr_2 = "Gautambuddha Nagar, Noida, Uttar Pradesh - 201305";
             $dispatch_from_gst = "09AAHCR1005Q1Z4";
             $dispatch_from_pan = "AAHCR1005Q";
             $dispatch_from_state_name = "Uttar Pradesh";
-            $dispatch_from_state_code = "9";
+            $dispatch_from_state_code = "09";
             $dispatch_from_cin = "U29253DL2014PTC273460";
         }
             
