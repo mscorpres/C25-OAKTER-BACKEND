@@ -854,7 +854,7 @@ router.post("/upload/item", upload1.single("file"), async (req, res) => {
       }
       if (isBlank(glCodeKey) || !glNameMap[glCodeKey]) {
         cleanup();
-        return res.json({ message: `Validation Failed: Invalid or missing GL_NAME at row [${rowNumber}]`, status: "error", success: false });
+        return res.json({ message: `Validation Failed: Invalid or missing GL_NAME "${glCodeKey}" at row [${rowNumber}]`, status: "error", success: false });
       }
       if (!isBlank(narration) && String(narration).length > MAX_NARRATION_LENGTH) {
         cleanup();
