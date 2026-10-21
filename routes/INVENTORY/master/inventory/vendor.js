@@ -1151,10 +1151,13 @@ router.post("/updateBranchDetails", [auth.isAuthorized], async (req, res) => {
     ]);
 
     // Check affected rows
-    const affectedRows1 = stmt1[0]?.affectedRows ?? stmt1[0] ?? 0;
-    const affectedRows2 = stmt2[0]?.affectedRows ?? stmt2[0] ?? 0;
+    // const affectedRows1 = stmt1[0]?.affectedRows ?? stmt1[0] ?? 0;
+    // const affectedRows2 = stmt2[0]?.affectedRows ?? stmt2[0] ?? 0;
 
-    if (affectedRows1 === 0 && affectedRows2 === 0) {
+    const [, affectedRows1] = stmt1;
+    const [, affectedRows2] = stmt2;
+
+    if (affectedRows1 == 0 && affectedRows2 == 0) {
       if (!t1.finished) await t1.rollback();
       if (!t2.finished) await t2.rollback();
       return res.json({
