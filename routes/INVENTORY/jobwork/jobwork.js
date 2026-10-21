@@ -5858,6 +5858,7 @@ router.post("/rm-consumption/save", [auth.isAuthorized], async (req, res) => {
     challanDt,
     component,
     consumpQty,
+    consumpRate,
     remark,
     consumpLoc,
   } = req.body;
@@ -5996,7 +5997,8 @@ router.post("/rm-consumption/save", [auth.isAuthorized], async (req, res) => {
             insert_date,
             insert_by,
             in_invoice_id,
-            invoice_date
+            invoice_date,
+            in_po_rate
           )
         VALUES
           (
@@ -6012,7 +6014,8 @@ router.post("/rm-consumption/save", [auth.isAuthorized], async (req, res) => {
             :insertDt,
             :insertBy,
             :invID,
-            :invDt
+            :invDt,
+            :in_po_rate
           )
         `,
           {
@@ -6028,6 +6031,7 @@ router.post("/rm-consumption/save", [auth.isAuthorized], async (req, res) => {
               insertBy: req.logedINUser,
               invID: challanNo,
               invDt: moment(challanDt, "DD-MM-YYYY").format("YYYY-MM-DD"),
+              in_po_rate: consumpRate?.[i]
             },
             transaction,
           },

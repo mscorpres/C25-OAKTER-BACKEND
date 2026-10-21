@@ -239,7 +239,8 @@ function getTransactionDetails(item) {
               : (item.transfer_transaction_id ?? "--"),
         };
       }
-      if (item.in_module === "--") {
+      // kuch CONSUMPTION rows (jaise jobwork droppage) mein in_module "" / NULL aata hai
+      if (!item.in_module || item.in_module === "--") {
         return {
           mode: "CONSUMP",
           label: "CONSUMPTION",
