@@ -219,7 +219,7 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
     for (let a = 0; a < mins.length; a++) {
       count++;
       let main_stmt = await invtDB.query(
-        "SELECT `c_part_no`, `c_name`, `qty`, `in_po_rate`, `in_hsn_code`, `in_gst_type`, `in_gst_rate`, `in_gst_cgst`, `in_gst_sgst`, `in_gst_igst`,`in_vendor_name`,`in_vendor_addr`,`in_invoice_id`,`in_po_invoice_id`,`in_jw_invoice_id`,`ven_basic_detail`.`ven_tds`,`ven_basic_detail`.`ven_name`,`units_name`,`in_po_transaction_id` , ackwlg_irn FROM `rm_location` LEFT JOIN `components` ON `rm_location`.`components_id` = `components`.`component_key` LEFT JOIN `units` ON `components`.`c_uom`=`units`.`units_id` LEFT JOIN `ven_basic_detail` ON `rm_location`.`in_vendor_name`=`ven_basic_detail`.`ven_register_id`  WHERE `in_transaction_id` = :min_id  AND `rm_location`.`trans_type` = 'INWARD'",
+        "SELECT `c_part_no`, `c_name`, `qty`, `in_po_rate`, `in_hsn_code`, `in_gst_type`, `in_gst_rate`, `in_gst_cgst`, `in_gst_sgst`, `in_gst_igst`,`in_vendor_name`,`in_vendor_addr`,`in_invoice_id`,`in_po_invoice_id`,`in_jw_invoice_id`,`ven_basic_detail`.`ven_tds`,`ven_basic_detail`.`ven_name`,`units_name`,`in_po_transaction_id` , ackwlg_irn, `in_vendor_branch AS vendorBranch` FROM `rm_location` LEFT JOIN `components` ON `rm_location`.`components_id` = `components`.`component_key` LEFT JOIN `units` ON `components`.`c_uom`=`units`.`units_id` LEFT JOIN `ven_basic_detail` ON `rm_location`.`in_vendor_name`=`ven_basic_detail`.`ven_register_id`  WHERE `in_transaction_id` = :min_id  AND `rm_location`.`trans_type` = 'INWARD'",
         {
           replacements: { min_id: mins[a] },
           type: invtDB.QueryTypes.SELECT,
