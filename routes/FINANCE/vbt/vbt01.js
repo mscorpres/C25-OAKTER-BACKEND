@@ -561,9 +561,9 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
       for (const row of main_stmt) {
         // GSTIN
         const gstIn_stmt = await invtDB.query(
-          "SELECT ven_add_gst FROM ven_address_detail WHERE ven_id = :ven_id",
+          "SELECT ven_add_gst FROM ven_address_detail WHERE ven_id = :ven_id AND ven_address_id = :venAddressId",
           {
-            replacements: { ven_id: row.venCode },
+            replacements: { ven_id: row.venCode,venAddressId: row.vendorBranch },
             type: invtDB.QueryTypes.SELECT,
           },
         );
