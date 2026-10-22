@@ -239,7 +239,7 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
 
           // GST VENDOR
           let gstIn_stmt = await invtDB.query("SELECT `ven_add_gst` FROM `ven_address_detail` WHERE `ven_id` = :ven_id AND ven_address_id = :venAddressId", {
-            replacements: { ven_id: main_stmt[i].in_vendor_name,venAddressId: row.vendorBranch },
+            replacements: { ven_id: main_stmt[i].in_vendor_name,venAddressId: main_stmt[i].vendorBranch },
             type: invtDB.QueryTypes.SELECT,
           });
 
