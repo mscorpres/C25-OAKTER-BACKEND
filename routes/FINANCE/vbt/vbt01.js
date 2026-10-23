@@ -483,6 +483,7 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
         mfg_approve_in_qty AS qty,
         in_fg_rate AS rate,
         fg_hsn_code AS hsnCode,
+        in_vendor_branch AS vendorBranch,
         fg_gst_type AS gstType,
         fg_gst_rate AS gstRate,
         fg_cgst AS cgst,
@@ -524,6 +525,7 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
         c_name AS itemName,
         qty,
         in_po_rate AS rate,
+        in_vendor_branch AS vendorBranch,
         in_hsn_code AS hsnCode,
         in_gst_type AS gstType,
         in_gst_rate AS gstRate,
@@ -561,9 +563,9 @@ router.post("/fetch_multi_min_data", [auth.isAuthorized], async (req, res) => {
       for (const row of main_stmt) {
         // GSTIN
         const gstIn_stmt = await invtDB.query(
-          "SELECT ven_add_gst FROM ven_address_detail WHERE ven_id = :ven_id",
+          "SELECT ven_add_gst FROM ven_address_detail WHERE ven_id = :ven_id AND ven_address_id = :venAddressId",
           {
-            replacements: { ven_id: row.venCode },
+            replacements: { ven_id: row.venCode,venAddressId: row.vendorBranch },
             type: invtDB.QueryTypes.SELECT,
           },
         );
