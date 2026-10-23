@@ -93,7 +93,7 @@ router.post("/addBranch", [auth.isAuthorized], async (req, res) => {
   });
 
   if (validator.fails()) {
-    return res.json({ status: "error", success: false, message: validator.errors.all() });
+    return res.json({ status: "error", success: false, message: validator.firstErrorValidatorjs(validator) });
   }
 
   const t1 = await tallyDB.transaction();
