@@ -4724,8 +4724,11 @@ router.post(
         /* 🔹 AUTO CONSUMPTION ISSUE (ORIGINAL LOGIC) */
         if (req.body.out_location[i] !== "0") {
           const { rate: existingWAR, qty: existingQty } =
-            await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRateWithStock(
+            await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
               componentId,
+              null,
+              null,
+              true,
             );
 
           const thisQty = helper.number(req.body.qty[i]);

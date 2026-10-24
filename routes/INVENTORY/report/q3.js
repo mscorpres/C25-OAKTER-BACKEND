@@ -11,7 +11,6 @@ const helper = require("../../../helper/helper");
 const avgRate = require("../../../helper/utils/avgRate");
 
 const {
-	newWeightedAverageRate,
 	calculateFGRate,
   } = require("../../../helper/utils/newAvgRate");
   const {

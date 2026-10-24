@@ -4,7 +4,6 @@ const { invtDB } = require("../../config/db/connection");
 const auth = require("../../middleware/auth");
 const { getWeightedPurchaseRate } = require("../../helper/utils/avgRate");
 const {
-  lastNewWeightedAverageRate,
   newWeightedAverageRate,
 } = require("../../helper/utils/newAvgRate");
 const { getDatabaseByGST } = require("../../helper/utils/gstDbMapper");
@@ -250,7 +249,6 @@ async function getBulkConsumptionItems(
             componentId,
             insertDt,
             insertRowID,
-            db, // GST-resolved connection selects branch-specific DB and cutoff
           );
           const mapKey = `${componentId}_${dateMs}`; // unique per component + date
           newWARMap.set(mapKey, rate);
@@ -750,7 +748,7 @@ router.get("/manufacturing", async (req, res) => {
       );
     }
 
-    // newWAR: pre-fetch lastNewWeightedAverageRate for all SFG inward consumption components
+    // newWAR: pre-fetch newWeightedAverageRate for all SFG inward consumption components
     const sfgNewWARMap = new Map();
     const sfgUniqueCompKeys = [
       ...new Set(sfgInwardStmt.map((r) => r.component_key).filter(Boolean)),
@@ -759,10 +757,9 @@ router.get("/manufacturing", async (req, res) => {
     if (sfgUniqueCompKeys.length > 0) {
       await Promise.all(
         sfgUniqueCompKeys.map(async (compKey) => {
-          const rate = await lastNewWeightedAverageRate(
+          const rate = await newWeightedAverageRate(
             compKey,
             todateFormatted,
-            db, // GST-resolved connection selects branch-specific DB and cutoff
           );
           sfgNewWARMap.set(compKey, rate);
         }),

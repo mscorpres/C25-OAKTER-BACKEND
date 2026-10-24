@@ -4,7 +4,7 @@ const Validator = require("validatorjs");
 const { invtDB } = require("../../../config/db/connection");
 const auth = require("../../../middleware/auth");
 const { getDatabaseByGST } = require("../../../helper/utils/gstDbMapper");
-const { lastNewWeightedAverageRate, calculateWARForTallyAPI } = require("../../../helper/utils/newAvgRate");
+const { newWeightedAverageRate, calculateWARForTallyAPI } = require("../../../helper/utils/newAvgRate");
 const { fgWeightedAverageRate } = require("../../../helper/utils/newFGavgRate");
 
 // Helper function to calculate weighted purchase rate using the same database connection
@@ -437,7 +437,7 @@ router.get("/consumption", async (req, res) => {
 
       const inventoryEntryPromises = group.map(async (item) => {
         const purchaseRate = useNewWAR
-          ? await lastNewWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), db)
+          ? await newWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"))
           : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
 
         const qty = Number(item.qty || 0);
@@ -534,7 +534,7 @@ router.get("/consumption", async (req, res) => {
 
       const inventoryEntryPromises = group.map(async (item) => {
         const purchaseRate = useNewWAR
-          ? await lastNewWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), db)
+          ? await newWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"))
           : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
 
         const qty = Number(item.qty || 0);

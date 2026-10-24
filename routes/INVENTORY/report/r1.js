@@ -466,7 +466,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
           },
         ),
 
-        require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(item.component_key, todate),
+        require("../../../helper/utils/newAvgRate").newWeightedAverageRate(item.component_key, todate),
       ]);
 
       if (stmt6.length > 0) {

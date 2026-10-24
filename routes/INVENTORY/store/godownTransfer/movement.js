@@ -1173,15 +1173,8 @@ router.post("/godownStocks", [auth.isAuthorized], async (req, res) => {
         },
       ),
 
-      // Avg rate — last INWARD from IN-WO module, non-cancelled
-      // invtDB.query(
-      //   `SELECT COALESCE( ( SELECT w_avr_rate FROM rm_location WHERE components_id = :component_id AND trans_type IN ('INWARD', 'TRANSFER') AND in_module != 'IN-WO' AND DATE_FORMAT(insert_date, '%Y-%m-%d %H:%i:%s') >= '2026-05-28 06:00:00' ORDER BY ID DESC LIMIT 1 ), ( SELECT last_rate FROM tbl_average_rate_2026 WHERE component_key = :component_id LIMIT 1 ) ) AS w_avr_rate`,
-      //   {
-      //     replacements: { component_id: req.body.component },
-      //     type: invtDB.QueryTypes.SELECT,
-      //   },
-      // ),
-      await require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+      // Avg rate — weighted average rate
+      await require("../../../../helper/utils/newAvgRate").newWeightedAverageRate(
         req.body.component,
       ),
     ]);
@@ -1534,7 +1527,7 @@ router.post("/report_rmsf_same", [auth.isAuthorized], async (req, res) => {
         // );
         //
         let weightedPurchaseRate =
-          await require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+          await require("../../../../helper/utils/newAvgRate").newWeightedAverageRate(
             item.component_key,
             todate,
           );

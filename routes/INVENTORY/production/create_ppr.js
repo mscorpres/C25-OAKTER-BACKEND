@@ -2619,7 +2619,7 @@ router.post(
             ),
 
             // Weighted average rate
-            require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+            require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
               comp_data.component_key,
             ),
           ]);
