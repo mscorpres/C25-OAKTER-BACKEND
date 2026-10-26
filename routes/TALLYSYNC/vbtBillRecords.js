@@ -776,8 +776,7 @@ router.get("/purchase/gst=:gst", async (req, res) => {
     }
 
     const resolved = await resolveWarehouseByGst(gst);
-    console.log("resolved", resolved);
-    console.log("gst ", gst);
+
     if (!resolved) {
       return res.status(404).json({
         success: false,
