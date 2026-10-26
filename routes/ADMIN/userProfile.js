@@ -338,8 +338,9 @@ router.put("/updateUserSettings", [auth.isAuthorized], async (req, res) => {
     }
 
     // Reset Login Attempt
-    if (typeof attempt !== "undefined") {
+    if (typeof attempt !== "undefined" && typeof resetTime !== "undefined") {
       const shouldReset = [1, "1"].includes(attempt);
+      const shouldResetTime = [1, "1", true, "true"].includes(resetTime);
 
       if (!shouldReset) {
         return res.json({
@@ -349,14 +350,6 @@ router.put("/updateUserSettings", [auth.isAuthorized], async (req, res) => {
           data: null,
         });
       }
-
-      updateFields.push("Attempt = :attempt");
-      replacements.attempt = 0;
-    }
-
-    if (typeof resetTime !== "undefined") {
-      const shouldResetTime = [1, "1", true, "true"].includes(resetTime);
-
       if (!shouldResetTime) {
         return res.json({
           success: false,
@@ -366,9 +359,14 @@ router.put("/updateUserSettings", [auth.isAuthorized], async (req, res) => {
         });
       }
 
-      updateFields.push("lastPasswordUpdate = :resetTime");
+      updateFields.push("Attempt = :attempt");
+      replacements.attempt = 0;
+
+      updateFields.push("lastPasswordUpdate = :lastPasswordUpdate");
       replacements.lastPasswordUpdate = moment().format("YYYY-MM-DD");
     }
+
+
 
     if (updateFields.length === 0) {
       return res.json({
