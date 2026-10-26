@@ -148,19 +148,23 @@ router.post(
       const filename = req?.file?.filename ?? "--";
       // const filename = req.files?.[0]?.filename ?? "--";
 
-      // Generate vendor registration code
-      const lastVendor = await invtDB.query(
-        "SELECT `ven_register_id` FROM `ven_basic_detail` ORDER BY `ID` DESC LIMIT 1 FOR UPDATE",
-        { type: invtDB.QueryTypes.SELECT, transaction: t1 }
-      );
+      // Generate vendor registration code (vendor is inserted into both DBs,
+      // so the code must be free in both)
+      const lastVendorSQL =
+        "SELECT `ven_register_id` FROM `ven_basic_detail` ORDER BY `ID` DESC LIMIT 1 FOR UPDATE";
+      const [lastVendor1, lastVendor2] = await Promise.all([
+        invtDB.query(lastVendorSQL, { type: invtDB.QueryTypes.SELECT, transaction: t1 }),
+        invtOakterDB.query(lastVendorSQL, { type: invtOakterDB.QueryTypes.SELECT, transaction: t2 }),
+      ]);
 
       let registrationCode;
-      if (lastVendor.length > 0) {
-        const vendor_last_id = lastVendor[0].ven_register_id;
-        const strings = vendor_last_id.replace(/[0-9]/g, "");
-        let digits = (
-          parseInt(vendor_last_id.replace(/[^0-9]/g, "")) + 1
-        ).toString();
+      const lastIds = [...lastVendor1, ...lastVendor2].map((v) => v.ven_register_id);
+      if (lastIds.length > 0) {
+        const strings = lastIds[0].replace(/[0-9]/g, "");
+        const maxNum = Math.max(
+          ...lastIds.map((id) => parseInt(id.replace(/[^0-9]/g, "")) || 0)
+        );
+        let digits = (maxNum + 1).toString();
         if (digits.length < 4) digits = ("000" + digits).substr(-4);
         registrationCode = strings + digits;
       } else {
@@ -186,26 +190,17 @@ router.post(
         });
       }
 
-      // Check duplicates
+      // Check duplicates in both DBs
+      const dupCheck = (sql, replacements) =>
+        Promise.all([
+          invtDB.query(sql, { replacements, type: invtDB.QueryTypes.SELECT, transaction: t1 }),
+          invtOakterDB.query(sql, { replacements, type: invtOakterDB.QueryTypes.SELECT, transaction: t2 }),
+        ]).then(([a, b]) => [...a, ...b]);
+
       const [panCheck, nameCheck, regCheck] = await Promise.all([
-        invtDB.query("SELECT * FROM ven_basic_detail WHERE ven_pan_no = :pan", {
-          replacements: { pan: vendor.panno },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t1,
-        }),
-        invtDB.query("SELECT * FROM ven_basic_detail WHERE ven_name = :name", {
-          replacements: { name: vendor.vendorname },
-          type: invtDB.QueryTypes.SELECT,
-          transaction: t1,
-        }),
-        invtDB.query(
-          "SELECT * FROM ven_basic_detail WHERE ven_register_id = :reg",
-          {
-            replacements: { reg: registrationCode },
-            type: invtDB.QueryTypes.SELECT,
-            transaction: t1,
-          }
-        ),
+        dupCheck("SELECT ven_register_id FROM ven_basic_detail WHERE ven_pan_no = :pan", { pan: vendor.panno }),
+        dupCheck("SELECT ven_register_id FROM ven_basic_detail WHERE ven_name = :name", { name: vendor.vendorname }),
+        dupCheck("SELECT ven_register_id FROM ven_basic_detail WHERE ven_register_id = :reg", { reg: registrationCode }),
       ]);
 
       if (panCheck.length > 0 || nameCheck.length > 0 || regCheck.length > 0) {
@@ -317,7 +312,12 @@ router.post(
       await Promise.all([t1.rollback(), t2.rollback()]);
       return res.json({
         code: 500,
-        message: err.message || "Something went wrong",
+        // Sequelize unique/validation errors only say "Validation error"; surface the real SQL message
+        message:
+          err.parent?.sqlMessage ||
+          err.errors?.[0]?.message ||
+          err.message ||
+          "Something went wrong",
         status: "error",
         success: false,
       });
@@ -1151,10 +1151,13 @@ router.post("/updateBranchDetails", [auth.isAuthorized], async (req, res) => {
     ]);
 
     // Check affected rows
-    const affectedRows1 = stmt1[0]?.affectedRows ?? stmt1[0] ?? 0;
-    const affectedRows2 = stmt2[0]?.affectedRows ?? stmt2[0] ?? 0;
+    // const affectedRows1 = stmt1[0]?.affectedRows ?? stmt1[0] ?? 0;
+    // const affectedRows2 = stmt2[0]?.affectedRows ?? stmt2[0] ?? 0;
 
-    if (affectedRows1 === 0 && affectedRows2 === 0) {
+    const [, affectedRows1] = stmt1;
+    const [, affectedRows2] = stmt2;
+
+    if (affectedRows1 == 0 && affectedRows2 == 0) {
       if (!t1.finished) await t1.rollback();
       if (!t2.finished) await t2.rollback();
       return res.json({

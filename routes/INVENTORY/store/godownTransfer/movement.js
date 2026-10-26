@@ -2350,7 +2350,7 @@ router.post("/transferSF2SF", [auth.isAuthorized], async (req, res) => {
       );
 
       // Handle special case for SF to SF999
-      if (req.body.tolocation[i] === "1762327049191") {
+      if (req.body.tolocation[i] === "1791276582599") {
         await invtDB.query(
           "INSERT INTO sf_rm_inward (company_branch, components_id, qty, loc_in, loc_out, any_remark, insert_date, insert_by, transaction_id) VALUES (:branch, :component, :qty, :loc_in, :loc_out, :remark, :insert_date, :insert_by, :transaction_id)",
           {

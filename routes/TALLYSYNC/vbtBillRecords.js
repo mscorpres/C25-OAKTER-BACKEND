@@ -7,13 +7,28 @@ const { getDbContextByGST } = require("../../helper/utils/gstDbMapper");
 const CHUNK_SIZE = 100;
 
 const VBT_TYPE_MAP = {
-  VBT01: "PurchaseC25",
-  VBT04: "PurchaseC25",
-  VBT05: "PurchaseC25",
-  VBT02: "Purchase-Services",
-  VBT06: "Purchase-Services",
-  VBT03: "Purchase-Import(Goods)",
-  VBT07: "RCM-Invoice",
+  C25: {
+    VBT01: "PurchaseC25",
+    VBT04: "PurchaseC25",
+    VBT05: "PurchaseC25",
+    VBT02: "Purchase-Services",
+    VBT06: "Purchase-Services",
+    VBT03: "Purchase-Import(Goods)",
+    VBT07: "RCM-Invoice",
+    VBT08: "Sales-Return",
+    VBT09: "FG-Purchase",
+  },
+  Alwar: {
+    VBT01: "Purchase",
+    VBT04: "Purchase",
+    VBT05: "Purchase",
+    VBT02: "Purchase-Services",
+    VBT06: "Purchase-Services",
+    VBT03: "Purchase-Import(Goods)",
+    VBT07: "RCM-Invoice",
+    VBT08: "Sales-Return",
+    VBT09: "FG-Purchase",
+  },
 };
 
 const CONSIGNEE_CONFIGS = {
@@ -26,9 +41,17 @@ const CONSIGNEE_CONFIGS = {
     country: "India",
     gst: "09AAHCR1005Q1Z4",
   },
+  Alwar: {
+    name: "Riot Labz Private Limited(Alwar)",
+    address: "B-36, Matasya Industrial Area,",
+    address1: "Alwar-301030 ( Rajasthan)",
+    pin: "301030",
+    state: "Rajasthan",
+    country: "India",
+    gst: "08AAHCR1005Q1Z6",
+  },
 };
 
-// Helper: replace "--", null, undefined, or "0" (when placeholder) with clean string
 function cleanValue(val) {
   if (val === null || val === undefined) return "";
   const str = String(val).trim();
@@ -38,7 +61,6 @@ function cleanValue(val) {
   return str;
 }
 
-// Helper: formats address string into 2-3 clean lines array of objects
 function formatAddressLines(rawAddress, maxLines = 3) {
   if (!rawAddress || cleanValue(rawAddress) === "") return [];
 
@@ -197,9 +219,7 @@ function buildMainQuery(inventoryDbName) {
 
 async function batchLoadMinData(rows, inventoryDb, inventoryDbName) {
   const pairs = rows
-    .filter(
-      (r) => r.min_id && r.min_id !== "--" && r.min_id !== "" && r.part_code
-    )
+    .filter((r) => r.min_id && r.min_id !== "--" && r.min_id !== "" && r.part_code)
     .map((r) => `(${inventoryDb.escape(r.min_id)}, ${inventoryDb.escape(r.part_code)})`);
 
   if (!pairs.length) return new Map();
@@ -334,18 +354,18 @@ async function batchLoadJWDetails(jwIds, inventoryDb) {
   return new Map(rows.map((r) => [r.jw_jw_transaction, r]));
 }
 
-async function batchLoadShipments(codes, tallyDb, inventoryDbName) {
+async function batchLoadShipments(codes, inventoryDb, inventoryDbName) {
   if (!codes.size) return new Map();
-  const ids = [...codes].map((c) => tallyDb.escape(c)).join(",");
+  const ids = [...codes].map((c) => inventoryDb.escape(c)).join(",");
   const sql = `
     SELECT * FROM ${inventoryDbName}.shipment_address
     WHERE shipment_code IN (${ids})
   `;
-  const rows = await tallyDb.query(sql, { type: tallyDb.QueryTypes.SELECT });
+  const rows = await inventoryDb.query(sql, { type: inventoryDb.QueryTypes.SELECT });
   return new Map(rows.map((r) => [r.shipment_code, r]));
 }
 
-function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tallyDb) {
+function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbName, tallyDb) {
   return (async () => {
     const venIds = new Set();
     const poNumbers = new Set();
@@ -419,7 +439,7 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
 
     const [ccMap] = await Promise.all([
       batchLoadCostCenters(ccKeys, inventoryDb),
-      batchLoadShipments(shipCodes, tallyDb, inventoryDbName),
+      batchLoadShipments(shipCodes, inventoryDb, inventoryDbName),
     ]);
 
     const voucherGroups = new Map();
@@ -452,7 +472,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
         const rowMinKey = `${row.min_id}::${row.part_code}`;
         const rowMinData = minMap.get(rowMinKey);
 
-        // Collect unique delivery notes
         if (row.min_id && row.min_id !== "--" && !delnotesMap.has(row.min_id)) {
           delnotesMap.set(row.min_id, {
             basicshippingdate: rowMinData?.minDate
@@ -462,7 +481,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
           });
         }
 
-        // Determine PO or JW key for the current row
         const rowPoLookupKey =
           row.po_number && row.po_number !== "--" && row.po_number !== ""
             ? row.po_number
@@ -484,7 +502,9 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
             basicpurchaseorderno: cleanValue(rowPoLookupKey),
           });
         } else if (jw && !orderMap.has(row.jw_id)) {
-          const parsedDate = moment(jw.jwDate).isValid() ? moment(jw.jwDate).format("DD-MM-YYYY") : "";
+          const parsedDate = moment(jw.jwDate).isValid()
+            ? moment(jw.jwDate).format("DD-MM-YYYY")
+            : "";
           orderMap.set(row.jw_id, {
             basicorderdate: parsedDate,
             basicpurchaseorderno: cleanValue(row.jw_id),
@@ -495,7 +515,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
       const delnotes = Array.from(delnotesMap.values());
       const orderlist = Array.from(orderMap.values());
 
-      // Fallback configuration for reference strings using the first detected order
       const firstOrderKey = orderMap.size > 0 ? orderMap.keys().next().value : null;
       const po = firstOrderKey ? poMap.get(firstOrderKey) : null;
       const jw = jwMap.get(firstRow.jw_id);
@@ -530,13 +549,13 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
       let primaryCostCenter = "";
 
       const inventoryentry = [];
-      const tdsLedgerMap = new Map(); // Tracks TDS ledgers and sums identical ones
+      const tdsLedgerMap = new Map();
 
       for (const row of vbtRows) {
         const itemMinKey = `${row.min_id}::${row.part_code}`;
         const itemMinData = minMap.get(itemMinKey);
         let costCenterKey = itemMinData?.costCentreCode ? String(itemMinData.costCentreCode) : null;
-        // Fall back to the PO / JW cost centre when the MIN has none
+
         if (!costCenterKey || !ccMap.get(costCenterKey)) {
           if (po?.po_cost_center && po.po_cost_center !== "--") {
             costCenterKey = String(po.po_cost_center);
@@ -545,7 +564,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
           }
         }
         const costCenter = costCenterKey ? ccMap.get(costCenterKey) : null;
-        // Tally cost centre allocations should show the alias, not the full name
         const costCenterAlias = costCenter?.alias || costCenter?.name || "";
 
         if (!primaryCostCenter && costCenterAlias) {
@@ -575,7 +593,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
         if (row.igstLedgerName) igstLedgerName = cleanValue(row.igstLedgerName);
         if (row.roundoffLedgerName) roundoffLedgerName = cleanValue(row.roundoffLedgerName);
 
-        // Group & sum TDS by ledger name across all rows
         const rowTdsName = cleanValue(row.tdsName);
         const rowTdsAmt = Number(row.vbt_tds_amount) || 0;
         if (rowTdsName && rowTdsAmt > 0) {
@@ -583,9 +600,12 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
           tdsLedgerMap.set(rowTdsName, currentTds + rowTdsAmt);
         }
 
+        // Determine the Raw Material godown based on the active branch
+        const rmGodown = branch === "Alwar" ? "RM001_Alwar" : "GDRM001_C25";
+
         const godown =
           row.txn_type === "RAW" || row.txn_type === "SER"
-            ? "GDRM001_C25"
+            ? rmGodown
             : "GDFG001";
 
         const isTaxable = Number(row.vbt_gst_rate) > 0 ? "Taxable" : "Non-Taxable";
@@ -611,7 +631,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
         });
       }
 
-      // 1. Single Bill Allocation (Created once per voucher, not inside the row loop)
       const invoiceAmt =
         firstRow.vbt_invoice_total_ammount && firstRow.vbt_invoice_total_ammount !== "--"
           ? Number(firstRow.vbt_invoice_total_ammount).toFixed(2)
@@ -667,7 +686,6 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
         });
       }
 
-      // 2. Add TDS ledger entries: identical ledgers are summed; different ones stay separate
       for (const [tdsName, sumTdsAmt] of tdsLedgerMap.entries()) {
         ledgerentries.push({
           ledgername: tdsName,
@@ -676,8 +694,19 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
         });
       }
 
+      const currentBranch = branch == "Alwar" ? "Alwar" : "C25";
+      const branchMapping = VBT_TYPE_MAP[currentBranch];
+
+      // 2. Clean the database value to guarantee a match (e.g. "vbt01 " -> "VBT01")
+      const dbVbtType = String(firstRow.vbt_type || "").trim().toUpperCase();
+
+      console.log("firstRow.vbt_type", firstRow.vbt_type);
+      console.log("dbVbtType", dbVbtType);
+      // 3. Map directly from your VBT_TYPE_MAP
+      const resolvedVoucherType = branchMapping[dbVbtType] || "";
+
       vouchers.push({
-        vouchertypename: VBT_TYPE_MAP[firstRow.vbt_type] || "",
+        vouchertypename: resolvedVoucherType,
         vouchernumber: cleanValue(firstRow.vbt_key),
         voucherdate: moment(firstRow.effective_date).format("DD-MM-YYYY"),
         refnumber: cleanValue(firstRow.vbt_invoice_no),
@@ -701,20 +730,24 @@ function processChunk(rows, consigneeConfig, inventoryDb, inventoryDbName, tally
       });
     }
 
+    // Send vouchers in voucher-number sequence (FY/2627/0008, 0009, 0010 ...)
+    vouchers.sort((a, b) =>
+      a.vouchernumber.localeCompare(b.vouchernumber, undefined, { numeric: true })
+    );
+
     return vouchers;
   })();
 }
 
-function resolveWarehouseByGst(gstNo) {
+async function resolveWarehouseByGst(gstNo) {
   let ctx;
   try {
-    ctx = getDbContextByGST(gstNo);
+    ctx = await getDbContextByGST(gstNo);
   } catch (err) {
     return null;
   }
 
-  const consigneeConfig = getConsigneeConfigByGst(gstNo);
-
+  const consigneeConfig = CONSIGNEE_CONFIGS[ctx.branch] || getConsigneeConfigByGst(gstNo);
   return { consigneeConfig, warehouseContext: ctx };
 }
 
@@ -740,7 +773,7 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       });
     }
 
-    const resolved = resolveWarehouseByGst(gst);
+    const resolved = await resolveWarehouseByGst(gst);
     if (!resolved) {
       return res.status(404).json({
         success: false,
@@ -758,7 +791,6 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       });
     }
 
-    // 1. Validate that 'wise' is explicitly provided as 'datewise'
     if (!wise || String(wise).toLowerCase() !== "datewise") {
       return res.status(400).json({
         success: false,
@@ -766,7 +798,6 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       });
     }
 
-    // 2. Validate date fields presence with validatorjs
     const validation = new Validator(
       { data, from, to },
       {
@@ -788,14 +819,14 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       });
     }
 
-    // 3. Extract and parse DD-MM-YYYY dates
     const dateRange = data || [from, to].filter(Boolean).join(" to ");
     const dates = String(dateRange).match(/([0-9]{2})-([0-9]{2})-([0-9]{4})/g);
 
     if (!dates || dates.length < 2) {
       return res.status(400).json({
         success: false,
-        message: "Provide two valid dates in DD-MM-YYYY format using 'data' (e.g. 01-08-2026 to 31-08-2026) or 'from' & 'to'",
+        message:
+          "Provide two valid dates in DD-MM-YYYY format using 'data' (e.g. 01-08-2026 to 31-08-2026) or 'from' & 'to'",
       });
     }
 
@@ -803,8 +834,9 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       date1: moment(dates[0], "DD-MM-YYYY").format("YYYY-MM-DD"),
       date2: moment(dates[1], "DD-MM-YYYY").format("YYYY-MM-DD"),
     };
+
     // ITEM MODE
-    if (reportMode == "item") {
+    if (reportMode === "item") {
       const itemRows = await warehouseContext.tallyDb.query(
         buildItemQueryByVBT(warehouseContext.inventoryDbName),
         {
@@ -902,6 +934,7 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       const transformed = await processChunk(
         chunk,
         consigneeConfig,
+        warehouseContext.branch,
         warehouseContext.inventoryDb,
         warehouseContext.inventoryDbName,
         warehouseContext.tallyDb
