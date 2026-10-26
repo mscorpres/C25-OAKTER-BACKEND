@@ -33,9 +33,9 @@ const VBT_TYPE_MAP = {
 
 const CONSIGNEE_CONFIGS = {
   C25: {
-    name: "Riot Labz Private Limited",
-    address: "WH: C-25, Phase II,",
-    address1: "Hosiery Complex, Noida 201305",
+    name: "Riot Labz Private Limited - (FY 26-27)",
+    address: "C-25 Hosiery Complex Phase 2,",
+    address1: "Noida, Gautambuddha Nagar",
     pin: "201305",
     state: "Uttar Pradesh",
     country: "India",
@@ -187,10 +187,10 @@ function buildMainQuery(inventoryDbName) {
       COALESCE(components.c_name, products.p_name)                  AS itemName,
       COALESCE(components.c_part_no, products.p_sku)                AS partNo,
       COALESCE(components.c_specification, products.p_description) AS itemDesc,
-      tally_vbt.hsn_code                                              AS hsn_code,
+      tally_vbt.hsn_code                                            AS hsn_code,
       units.units_name                                              AS uom_name,
       currency.currency_symbol,
-      gl.ladger_name          AS glName,
+      gl.code          AS glName,
       cgstLadger.ladger_name  AS cgstLedgerName,
       sgstLadger.ladger_name  AS sgstLedgerName,
       igstLadger.ladger_name  AS igstLedgerName,
@@ -201,18 +201,19 @@ function buildMainQuery(inventoryDbName) {
     LEFT JOIN ${inventoryDbName}.components      AS components ON components.component_key  = tally_vbt.part_code
     LEFT JOIN ${inventoryDbName}.products        AS products   ON products.product_key       = tally_vbt.part_code
     LEFT JOIN ${inventoryDbName}.units           AS units      ON units.units_id             = components.c_uom
-    LEFT JOIN tally_ledger                       AS gl          ON gl.ledger_key             = tally_vbt.gl_code
-    LEFT JOIN tally_ledger                       AS cgstLadger  ON cgstLadger.ledger_key     = tally_vbt.vbt_cgst_gl
-    LEFT JOIN tally_ledger                       AS sgstLadger  ON sgstLadger.ledger_key     = tally_vbt.vbt_sgst_gl
-    LEFT JOIN tally_ledger                       AS igstLadger  ON igstLadger.ledger_key     = tally_vbt.vbt_igst_gl
-    LEFT JOIN tally_ledger                       AS tdsLadger   ON tdsLadger.ledger_key      = tally_vbt.tds_gl
+    LEFT JOIN tally_ledger                       AS gl         ON gl.ledger_key              = tally_vbt.gl_code
+    LEFT JOIN tally_ledger                       AS cgstLadger ON cgstLadger.ledger_key      = tally_vbt.vbt_cgst_gl
+    LEFT JOIN tally_ledger                       AS sgstLadger ON sgstLadger.ledger_key      = tally_vbt.vbt_sgst_gl
+    LEFT JOIN tally_ledger                       AS igstLadger ON igstLadger.ledger_key      = tally_vbt.vbt_igst_gl
+    LEFT JOIN tally_ledger                       AS tdsLadger  ON tdsLadger.ledger_key       = tally_vbt.tds_gl
     LEFT JOIN tally_ledger                       AS roundoffLadger ON roundoffLadger.ledger_key = tally_vbt.round_off_gl
     LEFT JOIN tally_ledger AS tdsCode ON tally_vbt.tds_gl = tdsCode.ledger_key
-    LEFT JOIN ${inventoryDbName}.ims_currency    AS currency    ON currency.currency_id       = tally_vbt.currency_type
+    LEFT JOIN ${inventoryDbName}.ims_currency    AS currency   ON currency.currency_id       = tally_vbt.currency_type
   `;
 
   const notDeleted = `tally_vbt.vbt_status != 'DE'`;
-  const order = `ORDER BY tally_vbt.effective_date DESC`;
+  // Sort by effective_date, vbt_key, and ID so all lines of a voucher stay grouped together
+  const order = `ORDER BY tally_vbt.effective_date DESC, tally_vbt.vbt_key ASC, tally_vbt.ID ASC`;
 
   return `${base} WHERE (DATE_FORMAT(tally_vbt.insert_date,'%Y-%m-%d') BETWEEN :date1 AND :date2) AND ${notDeleted} ${order}`;
 }
@@ -226,11 +227,11 @@ async function batchLoadMinData(rows, inventoryDb, inventoryDbName) {
 
   const sql = `
     SELECT minTable.in_transaction_id   AS min_id,
-           minTable.components_id        AS part_code,
-           minTable.insert_date          AS minDate,
+           minTable.components_id       AS part_code,
+           minTable.insert_date         AS minDate,
            minTable.in_vendor_branch,
-           minTable.in_vendor_name       AS venCode,
-           minTable.rm_loc_cost_center   AS costCentreCode
+           minTable.in_vendor_name      AS venCode,
+           minTable.rm_loc_cost_center  AS costCentreCode
     FROM ${inventoryDbName}.rm_location AS minTable
     WHERE minTable.trans_type = 'INWARD' AND (minTable.in_transaction_id, minTable.components_id) IN (${pairs.join(",")})
   `;
@@ -262,7 +263,7 @@ async function batchLoadFgMinData(rows, minMap, inventoryDb, inventoryDbName) {
            mfg.mfg_ref_transid_1    AS mfgPoRef,
            mfg.mfg_cost_center      AS costCentreCode,
            mfg.mfg_pro_apr_transaction AS min_id,
-           p.product_key             AS part_code
+           p.product_key            AS part_code
     FROM ${inventoryDbName}.mfg_production_3 AS mfg
     INNER JOIN ${inventoryDbName}.products AS p ON mfg.mfg_pro_apr_sku = p.p_sku
     WHERE (mfg.mfg_pro_apr_transaction, p.product_key) IN (${pairs.join(",")})
@@ -289,8 +290,8 @@ async function batchLoadVendorDetails(venIds, inventoryDb) {
            venAddress.ven_add_gst AS venGst,
            vendor.ven_name        AS vendor_name,
            CASE WHEN venAddress.ven_state = 100 THEN 'Other' 
-              ELSE venState.state_name 
-         END AS venState
+                ELSE venState.state_name 
+           END AS venState
     FROM ven_address_detail AS venAddress
     LEFT JOIN ven_basic_detail AS vendor ON vendor.ven_register_id = venAddress.ven_id
     LEFT JOIN state_code AS venState ON venState.state_code = venAddress.ven_state
@@ -445,7 +446,7 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
     const voucherGroups = new Map();
 
     for (const row of rows) {
-      const vbtKey = row.vbt_key || row.vbt_invoice_no;
+      const vbtKey = cleanValue(row.vbt_key) || cleanValue(row.vbt_invoice_no);
       if (!voucherGroups.has(vbtKey)) {
         voucherGroups.set(vbtKey, []);
       }
@@ -456,8 +457,6 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
 
     for (const [vbtKey, vbtRows] of voucherGroups.entries()) {
       const firstRow = vbtRows[0];
-      const minKey = `${firstRow.min_id}::${firstRow.part_code}`;
-      const minData = minMap.get(minKey);
 
       let venName = cleanValue(firstRow.ven_code);
       const venEntry = venMap.get(String(firstRow.ven_code));
@@ -551,16 +550,30 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
       const inventoryentry = [];
       const tdsLedgerMap = new Map();
 
+      const currentBranch = branch == "Alwar" ? "Alwar" : "C25";
+      const branchMapping = VBT_TYPE_MAP[currentBranch];
+      const dbVbtType = String(firstRow.vbt_type || "").trim().toUpperCase();
+      const resolvedVoucherType = branchMapping[dbVbtType] || "";
+
       for (const row of vbtRows) {
         const itemMinKey = `${row.min_id}::${row.part_code}`;
         const itemMinData = minMap.get(itemMinKey);
         let costCenterKey = itemMinData?.costCentreCode ? String(itemMinData.costCentreCode) : null;
 
+        const rowPoKey =
+          row.po_number && row.po_number !== "--" && row.po_number !== ""
+            ? row.po_number
+            : itemMinData?.mfgPoRef && itemMinData.mfgPoRef !== "--"
+              ? String(itemMinData.mfgPoRef)
+              : null;
+        const rowPo = rowPoKey ? poMap.get(rowPoKey) : po;
+        const rowJw = row.jw_id ? jwMap.get(row.jw_id) : jw;
+
         if (!costCenterKey || !ccMap.get(costCenterKey)) {
-          if (po?.po_cost_center && po.po_cost_center !== "--") {
-            costCenterKey = String(po.po_cost_center);
-          } else if (jw?.jw_cost_center && jw.jw_cost_center !== "--") {
-            costCenterKey = String(jw.jw_cost_center);
+          if (rowPo?.po_cost_center && rowPo.po_cost_center !== "--") {
+            costCenterKey = String(rowPo.po_cost_center);
+          } else if (rowJw?.jw_cost_center && rowJw.jw_cost_center !== "--") {
+            costCenterKey = String(rowJw.jw_cost_center);
           }
         }
         const costCenter = costCenterKey ? ccMap.get(costCenterKey) : null;
@@ -600,13 +613,17 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
           tdsLedgerMap.set(rowTdsName, currentTds + rowTdsAmt);
         }
 
-        // Determine the Raw Material godown based on the active branch
-        const rmGodown = branch === "Alwar" ? "RM001_Alwar" : "GDRM001_C25";
+        const rowVbtType = String(row.vbt_type || dbVbtType).trim().toUpperCase();
+        const isFgVbt = ["VBT08", "VBT09"].includes(rowVbtType);
 
-        const godown =
-          row.txn_type === "RAW" || row.txn_type === "SER"
-            ? rmGodown
-            : "GDFG001";
+        const rmGodown =
+          branch === "Alwar"
+            ? isFgVbt
+              ? "GDFG001_Alwar"
+              : "RM001_Alwar"
+            : isFgVbt
+              ? "C25_FG001"
+              : "GDRM001_C25";
 
         const isTaxable = Number(row.vbt_gst_rate) > 0 ? "Taxable" : "Non-Taxable";
         inventoryentry.push({
@@ -617,7 +634,7 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
           rate: `${Number(row.vbt_inrate)}`,
           amount: `${taxableVal.toFixed(2)}`,
           billedqty: `${Number(row.vbt_bill_qty).toFixed(2)}`,
-          godownname: godown,
+          godownname: rmGodown,
           ledgername: cleanValue(row.glName),
           category: "Main",
           costcentreallocations: costCenterAlias
@@ -694,17 +711,6 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
         });
       }
 
-      const currentBranch = branch == "Alwar" ? "Alwar" : "C25";
-      const branchMapping = VBT_TYPE_MAP[currentBranch];
-
-      // 2. Clean the database value to guarantee a match (e.g. "vbt01 " -> "VBT01")
-      const dbVbtType = String(firstRow.vbt_type || "").trim().toUpperCase();
-
-      console.log("firstRow.vbt_type", firstRow.vbt_type);
-      console.log("dbVbtType", dbVbtType);
-      // 3. Map directly from your VBT_TYPE_MAP
-      const resolvedVoucherType = branchMapping[dbVbtType] || "";
-
       vouchers.push({
         vouchertypename: resolvedVoucherType,
         vouchernumber: cleanValue(firstRow.vbt_key),
@@ -730,11 +736,6 @@ function processChunk(rows, consigneeConfig, branch, inventoryDb, inventoryDbNam
       });
     }
 
-    // Send vouchers in voucher-number sequence (FY/2627/0008, 0009, 0010 ...)
-    vouchers.sort((a, b) =>
-      a.vouchernumber.localeCompare(b.vouchernumber, undefined, { numeric: true })
-    );
-
     return vouchers;
   })();
 }
@@ -744,6 +745,7 @@ async function resolveWarehouseByGst(gstNo) {
   try {
     ctx = await getDbContextByGST(gstNo);
   } catch (err) {
+    console.log(err);
     return null;
   }
 
@@ -774,6 +776,7 @@ router.get("/purchase/gst=:gst", async (req, res) => {
     }
 
     const resolved = await resolveWarehouseByGst(gst);
+
     if (!resolved) {
       return res.status(404).json({
         success: false,
@@ -862,7 +865,7 @@ router.get("/purchase/gst=:gst", async (req, res) => {
     }
 
     // VENDOR MODE
-    if (reportMode == "vendor") {
+    if (reportMode === "vendor") {
       const vendorRows = await warehouseContext.tallyDb.query(
         buildVendorQueryByVBT(warehouseContext.inventoryDbName),
         {
@@ -928,11 +931,24 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       });
     }
 
+    // Group rows by voucher key BEFORE chunking so lines of the same voucher are never split across chunks
+    const groupedVouchersMap = new Map();
+    for (const row of main_stmt) {
+      const vbtKey = cleanValue(row.vbt_key) || cleanValue(row.vbt_invoice_no);
+      if (!groupedVouchersMap.has(vbtKey)) {
+        groupedVouchersMap.set(vbtKey, []);
+      }
+      groupedVouchersMap.get(vbtKey).push(row);
+    }
+
+    const allVoucherGroups = Array.from(groupedVouchersMap.values());
     const tallymessage = [];
-    for (let i = 0; i < main_stmt.length; i += CHUNK_SIZE) {
-      const chunk = main_stmt.slice(i, i + CHUNK_SIZE);
+
+    // Chunk by complete vouchers rather than raw SQL rows
+    for (let i = 0; i < allVoucherGroups.length; i += CHUNK_SIZE) {
+      const chunkRows = allVoucherGroups.slice(i, i + CHUNK_SIZE).flat();
       const transformed = await processChunk(
-        chunk,
+        chunkRows,
         consigneeConfig,
         warehouseContext.branch,
         warehouseContext.inventoryDb,
@@ -941,6 +957,11 @@ router.get("/purchase/gst=:gst", async (req, res) => {
       );
       tallymessage.push(...transformed);
     }
+
+    // Sort all vouchers globally by voucher number sequence (FY/2627/0008, 0009, 0010 ...)
+    tallymessage.sort((a, b) =>
+      a.vouchernumber.localeCompare(b.vouchernumber, undefined, { numeric: true })
+    );
 
     return res.status(200).json({
       tallymessage,
