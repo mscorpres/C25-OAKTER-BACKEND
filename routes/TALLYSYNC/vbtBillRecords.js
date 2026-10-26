@@ -33,9 +33,9 @@ const VBT_TYPE_MAP = {
 
 const CONSIGNEE_CONFIGS = {
   C25: {
-    name: "Riot Labz Private Limited",
-    address: "WH: C-25, Phase II,",
-    address1: "Hosiery Complex, Noida 201305",
+    name: "Riot Labz Private Limited - (FY 26-27)",
+    address: "C-25 Hosiery Complex Phase 2,",
+    address1: "Noida, Gautambuddha Nagar",
     pin: "201305",
     state: "Uttar Pradesh",
     country: "India",
@@ -190,7 +190,7 @@ function buildMainQuery(inventoryDbName) {
       tally_vbt.hsn_code                                              AS hsn_code,
       units.units_name                                              AS uom_name,
       currency.currency_symbol,
-      gl.ladger_name          AS glName,
+      gl.code          AS glName,
       cgstLadger.ladger_name  AS cgstLedgerName,
       sgstLadger.ladger_name  AS sgstLedgerName,
       igstLadger.ladger_name  AS igstLedgerName,
@@ -743,7 +743,9 @@ async function resolveWarehouseByGst(gstNo) {
   let ctx;
   try {
     ctx = await getDbContextByGST(gstNo);
+    console.log("ctx", ctx);
   } catch (err) {
+    console.log(err);
     return null;
   }
 
@@ -774,6 +776,8 @@ router.get("/purchase/gst=:gst", async (req, res) => {
     }
 
     const resolved = await resolveWarehouseByGst(gst);
+    console.log("resolved", resolved);
+    console.log("gst ", gst);
     if (!resolved) {
       return res.status(404).json({
         success: false,
