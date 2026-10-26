@@ -22,12 +22,16 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
     queryOptions.transaction = transaction;
   }
 
+  // FG RETURN EXECUTE rows = TRANSFER rows with no "location in" ('--' / NULL / '').
+  // Their qty is stored in mfg_approve_in_qty and it is consumed from fgout_pro_location_out,
+  // so they must be treated as OUT, not IN.
   const stockRows = await invtDB.query(
     `SELECT
       COALESCE(SUM(
         CASE
-          WHEN type IN ('IN', 'FGMIN', 'TRANSFER','BRANCHTRANSFER')
+          WHEN type IN ('IN', 'FGMIN', 'TRANSFER')
             AND mfg_pro_location_in = :location
+            AND mfg_pro_location_in <> '--'
             THEN COALESCE(mfg_approve_in_qty, 0)
           ELSE 0
         END
@@ -37,6 +41,10 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
           WHEN type = 'OUT'
             AND fgout_pro_location_out = :location
             THEN COALESCE(fgout_approve_out_qty, 0)
+          WHEN type = 'TRANSFER'
+            AND (mfg_pro_location_in = '--' OR mfg_pro_location_in IS NULL OR mfg_pro_location_in = '')
+            AND fgout_pro_location_out = :location
+            THEN COALESCE(mfg_approve_in_qty, 0)
           ELSE 0
         END
       ), 0) AS available_qty
@@ -44,7 +52,7 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
     WHERE fg_status = 'ACTIVE'
       AND company_branch = :branch
       AND (
-        (mfg_pro_apr_sku = :sku AND type IN ('IN', 'FGMIN', 'TRANSFER','BRANCHTRANSFER'))
+        (mfg_pro_apr_sku = :sku AND type IN ('IN', 'FGMIN', 'TRANSFER'))
         OR (fgout_pro_apr_sku = :product_key AND type = 'OUT')
       )`,
     queryOptions
@@ -53,6 +61,7 @@ async function getFgPickLocationStockQty(sku, productKey, location, branch, tran
   const availableQty = stockRows.length ? helper.number(stockRows[0].available_qty) : 0;
   return availableQty < 0 ? 0 : availableQty;
 }
+
 
 
 
