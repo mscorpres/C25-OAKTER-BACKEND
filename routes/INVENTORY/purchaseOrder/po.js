@@ -5811,18 +5811,24 @@ router.post("/upload/item", upload1.single("file"), async (req, res) => {
       });
     }
 
+    // CHANGE: PO_BOM_QTY added at index 4
     const expectedColumns = [
       "PART_CODE",
       "ITEM_DESCRIPTION",
       "QTY",
       "RATE",
+      "PO_BOM_QTY",
       "HSN",
       "DUE_DATE",
       "GST_RATE",
       "INTERNAL_REMARK",
     ];
 
-
+    // CHANGE: helper so "N/A" / "NA" / "--" / blank are treated as empty
+    const isEmptyVal = (v) =>
+      v === null ||
+      v === undefined ||
+      ["", "--", "N/A", "NA"].includes(String(v).trim().toUpperCase());
 
     const filePath = req.file.path;
     const workbook = XLSX.readFile(filePath);
@@ -6127,9 +6133,14 @@ router.post("/upload/item", upload1.single("file"), async (req, res) => {
       }
 
 
+      // CHANGE: PO_BOM_QTY (index 4) - "N/A" / blank becomes 0
+      const poBomQty = row[4];
+      row[4] = isEmptyVal(poBomQty) ? 0 : Number(poBomQty) || 0;
 
-      const hsn = row[4];
-      if (hsn !== null && hsn !== undefined && hsn !== "--") {
+
+      // CHANGE: HSN moved from row[4] to row[5], "N/A" treated as empty
+      const hsn = row[5];
+      if (!isEmptyVal(hsn)) {
         const hsnStr = String(hsn).trim();
         if (![6, 8].includes(hsnStr.length) || isNaN(Number(hsn))) {
           fs.unlinkSync(filePath);
@@ -6141,18 +6152,14 @@ router.post("/upload/item", upload1.single("file"), async (req, res) => {
           });
         }
       }
-      row[4] = hsn != null ? String(hsn).trim() : "--";
+      row[5] = !isEmptyVal(hsn) ? String(hsn).trim() : "--";
 
 
-      const dueDate = row[5];
+      // CHANGE: DUE_DATE moved from row[5] to row[6], "N/A" treated as empty
+      const dueDate = row[6];
 let dueDateStr = "";
 
-if (
-  dueDate !== null &&
-  dueDate !== undefined &&
-  String(dueDate).trim() !== "" &&
-  String(dueDate).trim() !== "--"
-) {
+if (!isEmptyVal(dueDate)) {
   dueDateStr = String(dueDate).trim();
 
   const dueDateRegex = /^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/;
@@ -6168,15 +6175,17 @@ if (
   }
 }
 
-row[5] = dueDateStr;
+row[6] = dueDateStr;
 
 
-      const gstRate = row[6] != null && String(row[6]).trim() !== "" ? Number(row[6]) : 0;
-      row[6] = gstRate;
+      // CHANGE: GST_RATE moved from row[6] to row[7], "N/A" becomes 0
+      const gstRate = !isEmptyVal(row[7]) ? Number(row[7]) || 0 : 0;
+      row[7] = gstRate;
 
 
-      const internalRemark = row[7];
-      row[7] = internalRemark != null ? String(internalRemark).trim() : "--";
+      // CHANGE: INTERNAL_REMARK moved from row[7] to row[8], "N/A" becomes "--"
+      const internalRemark = row[8];
+      row[8] = !isEmptyVal(internalRemark) ? String(internalRemark).trim() : "--";
     }
 
     // fs.unlinkSync(filePath);
