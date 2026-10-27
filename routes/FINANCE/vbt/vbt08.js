@@ -6,7 +6,6 @@ const permission = require("../../../middleware/permission");
 const { invtDB, tallyDB } = require("../../../config/db/connection");
 const Validator = require("validatorjs");
 const moment = require("moment");
-const { getNextVbtNumber } = require("../../../helper/utils/vbtNumbering");
 
 
 
@@ -128,7 +127,7 @@ router.post("/fetch_vbt08", async (req, res) => {
       return res.json({
         success: false,
         status: "error",
-        message:"No Data Found!!!",
+        message: "No Data Found!!!",
       });
     }
   } catch (err) {
@@ -136,7 +135,7 @@ router.post("/fetch_vbt08", async (req, res) => {
     return res.json({
       success: false,
       status: "error",
-      message:  "Internal Error<br/>If this condition persists, contact your system administrator",
+      message: "Internal Error<br/>If this condition persists, contact your system administrator",
       errors: err.stack,
     });
   }
@@ -353,7 +352,7 @@ router.post("/fetch_multi_fg_min_data", async (req, res) => {
     return res.json({
       success: false,
       status: "error",
-      message:  "Internal Error",
+      message: "Internal Error",
       error: error.stack,
     });
   }
@@ -390,7 +389,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
   try {
     if (moment(req.body.invoice_date, "DD-MM-YYYY") > moment(req.body.eff_date, "DD-MM-YYYY")) {
-      return res.json({ success: false, status: 'error', message:'effective date must be greater than invoice date' });
+      return res.json({ success: false, status: 'error', message: 'effective date must be greater than invoice date' });
     }
     let part_length = req.body.part_code.length;
     let total_debit = 0;
@@ -429,18 +428,58 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
     }
 
     if (Math.abs(Number(req.body.bill_amount) - Number(total_ven_ammount).toFixed(2)) != 0) {
-      return res.json({success: false, status: "error", message:`Bill ammount ${req.body.bill_amount} and Vendor amount ${total_ven_ammount} not match ` });
+      return res.json({ success: false, status: "error", message: `Bill ammount ${req.body.bill_amount} and Vendor amount ${total_ven_ammount} not match ` });
     }
 
     if (Math.abs(Number(Number(total_credit).toFixed(2)) - Number(Number(total_debit).toFixed(2))) != 0) {
       return res.json({
-        success:false,
+        success: false,
         status: "error",
         message: `Debit(${total_debit}) And Credit Value(${total_credit}) not matched`,
       });
     }
 
-    const vbt_key = await getNextVbtNumber(transaction);
+    let stmt_number = await tallyDB.query(
+      "SELECT * FROM `tally_numbering` WHERE `for_number` = 'VBT08' FOR UPDATE",
+      {
+        type: tallyDB.QueryTypes.SELECT,
+        transaction: transaction,
+      }
+    );
+
+    var vbt_no;
+
+    if (stmt_number.length > 0) {
+      let suffix = parseInt(stmt_number[0].suffix, 10) + 1;
+
+      // VBT08: no leading zeros
+      vbt_no =
+        stmt_number[0].prefix +
+        "/" +
+        stmt_number[0].session.replace("-", "") +
+        "/" +
+        suffix;
+    } else {
+      let currYear = parseInt(
+        new Date().getFullYear().toString().slice(-2),
+        10
+      );
+
+      let nextYear = (currYear + 1) % 100;
+
+      vbt_no = `FY/${currYear}${String(nextYear).padStart(2, "0")}/1`;
+    }
+
+    await tallyDB.query(
+      "UPDATE `tally_numbering` SET `suffix` = `suffix` + 1 WHERE `for_number` = 'VBT08'",
+      {
+        type: tallyDB.QueryTypes.UPDATE,
+        transaction: transaction,
+      }
+    );
+    // END NUMBURING FUN
+
+    const vbt_key = vbt_no;
     const insert_data = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
     const effective_data = moment(req.body.eff_date, "DD-MM-YYYYY").tz("Asia/Kolkata").format("YYYY-MM-DD");
     const insert_by = req.logedINUser;
@@ -474,7 +513,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
       if (part_key.length === 0) {
         return res.json({
-          success:false,
+          success: false,
           status: "error",
           message: `Product not found for part code ${req.body.part_code[i]}`,
         });
@@ -486,7 +525,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
         "INSERT INTO `tally_vbt` (txn_type, `part_code`, project_id, `vbt_inqty`,`vbt_bill_qty`, `vbt_inrate`, `vbt_taxable_value`, `hsn_code`, `vbt_gst_type`, `vbt_gst_rate`, `freight`, `vbt_freight_gl`, `vbp_gst_ass_value`, `vbt_cgst`,`vbt_cgst_gl`, `vbt_sgst`,`vbt_sgst_gl`, `vbt_igst`,`vbt_igst_gl`, `gl_code`, `tds_code`, `tds_gl`, `vbt_ven_ammount`, `vbt_key`, `insert_by`, `insert_date`, `min_id` , inrPrice , cifPrice , cifValue ,`vbt_tds_ass_val`,`vbt_tds_amount`, `ven_address`, `vbt_invoice_no`, `vbt_invoice_date`, `vbt_comment`,`ven_code`, `vbt_gstin`,`vbt_type` , `effective_date` , `item_description` , billAmount) VALUES (:type, :part_code, :project_id, :in_qtys, :vbt_bill_qty, :in_rates, :taxable_values, :hsn_code, :in_gst_types, :vbt_gst_rate,  :freight, :freight_gl, :gst_ass_vals, :cgsts, :cgsts_gl, :sgsts, :sgsts_gl, :igsts, :igsts_gl, :g_l_codes, :tds_codes, :tds_gl, :ven_amounts, :vbt_key, :insert_by, :insert_date, :min_id , :inrPrice, :cifPrice, :cifValue, :tds_ass_vals, :tds_amounts,:ven_address, :invoice_no, :invoice_date, :comment, :ven_code, :vbt_gstin, 'VBT08' , :effective_date , :item_description , :billAmount )",
         {
           replacements: {
-            type:"FG",
+            type: "FG",
             project_id: findProject[0].mfg_project_id,
             vbt_key: vbt_key,
             in_qtys: req.body.in_qtys[i],
@@ -630,7 +669,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
         if (req.body.tds_gl_code[i] == "--") {
           await transaction.rollback();
-          return res.json({ success:false, status: 'error', message: 'TDS Gl not selected.' })
+          return res.json({ success: false, status: 'error', message: 'TDS Gl not selected.' })
         }
 
         let insert_tds_gl_code = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
@@ -724,11 +763,11 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
     await transaction.commit();
     await transactioninvt.commit();
-    return res.json({ success:true, status: "success", message: "Insertion Successfull" });
+    return res.json({ success: true, status: "success", message: "Insertion Successfull" });
   } catch (error) {
     await transaction.rollback();
     await transactioninvt.rollback();
-    return res.json({ success:false, status: "error", message:  "Internal Error<br/>If this condition persists, contact your system administrator", err: error.stack });
+    return res.json({ success: false, status: "error", message: "Internal Error<br/>If this condition persists, contact your system administrator", err: error.stack });
   }
 });
 
@@ -756,10 +795,10 @@ router.get("/vbt08_gl_options", async (req, res) => {
         return res.json(options);
       }
     } else {
-      return res.json({ success:false, status: "error", message: "No G/L Mapping Found!!" });
+      return res.json({ success: false, status: "error", message: "No G/L Mapping Found!!" });
     }
   } catch (err) {
-    return res.json({ success:false, status: "error", message: "Internal Error<br/>If this condition persists, contact your system administrator", err: err.stack });
+    return res.json({ success: false, status: "error", message: "Internal Error<br/>If this condition persists, contact your system administrator", err: err.stack });
   }
 });
 
