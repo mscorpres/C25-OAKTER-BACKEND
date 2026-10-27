@@ -6,6 +6,7 @@ const permission = require("../../../middleware/permission");
 const { invtDB, tallyDB } = require("../../../config/db/connection");
 const Validator = require("validatorjs");
 const moment = require("moment");
+const { getNextVbtNumber } = require("../../../helper/utils/vbtNumbering");
 
 
 
@@ -439,31 +440,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
       });
     }
 
-    // NUMBURING FUN
-    let stmt_number = await tallyDB.query("SELECT * FROM `tally_numbering` WHERE `for_number` = 'VBT08' FOR UPDATE", {
-      type: tallyDB.QueryTypes.SELECT,
-      transaction: transaction,
-    });
-    var vbt_no;
-    if (stmt_number.length > 0) {
-      var suffix = stmt_number[0].suffix;
-      suffix = parseInt(suffix) + 1;
-      suffix = suffix.toString();
-      suffix = suffix.padStart(parseInt(stmt_number[0].number_length_limit), "0");
-
-      vbt_no = stmt_number[0].prefix + "/" + stmt_number[0].session + "/" + suffix;
-    } else {
-      let currYear = parseInt(new Date().getFullYear().toString().substr(2, 2));
-      vbt_no = "VBT08/" + currYear + "-" + (currYear + 1) + "/0001";
-    }
-
-    await tallyDB.query("UPDATE `tally_numbering` SET `suffix` = `suffix`+1 WHERE `for_number`= 'VBT08'", {
-      type: tallyDB.QueryTypes.UPDATE,
-      transaction: transaction,
-    });
-    // END NUMBURING FUN
-
-    const vbt_key = vbt_no;
+    const vbt_key = await getNextVbtNumber(transaction);
     const insert_data = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
     const effective_data = moment(req.body.eff_date, "DD-MM-YYYYY").tz("Asia/Kolkata").format("YYYY-MM-DD");
     const insert_by = req.logedINUser;
