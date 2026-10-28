@@ -154,8 +154,8 @@ router.get("/consumption", async (req, res) => {
     );
 
     //SF024 → REJ021 (OUT)
-    const sf024LocOut = '20220106105354';
-    const sf024LocIn = '20210920102942';
+    const sf024LocOut = '1789794097830';
+    const sf024LocIn = '1785149544978';
 
     const sf024ToRej021Stmt = await db.query(
       `SELECT
@@ -433,7 +433,7 @@ router.get("/consumption", async (req, res) => {
     const type2Promises = [];
     for (const [txnId, group] of Object.entries(groupedSf024ToRej021)) {
       const firstItem = group[0];
-      const voucherNumber = `QCF${txnId}`;
+      const voucherNumber = `C25/QCF${txnId}`;
 
       const inventoryEntryPromises = group.map(async (item) => {
         const purchaseRate = useNewWAR
