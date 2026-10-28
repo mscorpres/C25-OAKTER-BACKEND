@@ -154,8 +154,8 @@ router.get("/consumption", async (req, res) => {
     );
 
     //SF024 → REJ021 (OUT)
-    const sf024LocOut = '20220106105354';
-    const sf024LocIn = '20210920102942';
+    const sf024LocOut = '1789794097830';
+    const sf024LocIn = '1785149544978';
 
     const sf024ToRej021Stmt = await db.query(
       `SELECT
