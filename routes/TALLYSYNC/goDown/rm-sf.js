@@ -546,7 +546,7 @@ router.get("/stock_journal", async (req, res) => {
 
       const sourceLocationCode = "GDRM001_C25";
       const destinationLocation = "C25_Rejection";
-      const voucherNum = `RMREJ${moment(item.insert_date).format("DDMMYY")}`;
+      const voucherNum = `C25RMREJ${moment(item.insert_date).format("DDMMYY")}`;
 
       return {
         voucherNumber: voucherNum,
@@ -574,9 +574,9 @@ router.get("/stock_journal", async (req, res) => {
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
 
-      const sourceLocationCode = "GDWP001_A21";
-      const destinationLocation = "GDSF024_Rejection";
-      const voucherNum = `SF/SF024/${moment(item.insert_date).format("DDMMYY")}`;
+      const sourceLocationCode = "C25_SF";
+      const destinationLocation = "C25_Rejection";
+      const voucherNum = `C25SF/SF024/${moment(item.insert_date).format("DDMMYY")}`;
 
       return {
         voucherNumber: voucherNum,
@@ -604,9 +604,9 @@ router.get("/stock_journal", async (req, res) => {
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
 
-      const sourceLocationCode = "GDSF024_Rejection";
-      const destinationLocation = "GDWP001_A21";
-      const voucherNum = `REJ/SF/${moment(item.insert_date).format("DDMMYY")}`;
+      const sourceLocationCode = "C25_Rejection";
+      const destinationLocation = "C25_SF";
+      const voucherNum = `C25REJ/SF/${moment(item.insert_date).format("DDMMYY")}`;
 
       return {
         voucherNumber: voucherNum,
