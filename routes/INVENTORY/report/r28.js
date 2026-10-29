@@ -31,7 +31,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       return res.json({ status: "error", success: false, message: "No Data Found" });
     }
 
-    const avgRate = require("../../../helper/utils/avgRate");
+    const { newWeightedAverageRate } = require("../../../helper/utils/newAvgRate");
 
     const promises = stmt.map(async (item) => ({
       part_code: item.parts_code,
@@ -40,7 +40,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       rm_qty: item.rm,
       sf_qty: item.sf,
       time: moment(item.insert_date, "YYYY-MM-DD HH:mm:ss").format("DD-MM-YYYY HH:mm:ss"),
-      weightedPurchaseRate: await avgRate.getWeightedPurchaseRate(item.component_key, moment(item.insert_date, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD HH:mm:ss")),
+      weightedPurchaseRate: (await newWeightedAverageRate(item.component_key, moment(item.insert_date, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD HH:mm:ss"))).toFixed(2),
     }));
 
     const data = await Promise.all(promises);

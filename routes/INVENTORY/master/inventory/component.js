@@ -1405,7 +1405,7 @@ router.post(
           },
         ),
 
-        require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+        require("../../../../helper/utils/newAvgRate").newWeightedAverageRate(
           req.body.component_code,
         ),
       ]);

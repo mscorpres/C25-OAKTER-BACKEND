@@ -2,9 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { invtDB } = require("../../config/db/connection");
 const auth = require("../../middleware/auth");
-const { getWeightedPurchaseRate } = require("../../helper/utils/avgRate");
 const {
-  lastNewWeightedAverageRate,
   newWeightedAverageRate,
 } = require("../../helper/utils/newAvgRate");
 const { getDatabaseByGST } = require("../../helper/utils/gstDbMapper");
@@ -132,13 +130,11 @@ async function getBulkConsumptionItems(
   ];
   const componentDateKeySet = new Set();
   const componentDateKeyList = [];
-  let maxDateMs = 0;
   consumptionRows.forEach((row) => {
     if (!row.components_id || !row.insert_date) return;
     const currDate = new Date(row.insert_date);
     const currMs = currDate.getTime();
     if (Number.isNaN(currMs)) return;
-    if (currMs > maxDateMs) maxDateMs = currMs;
     const key = `${row.components_id}_${currMs}`;
     if (!componentDateKeySet.has(key)) {
       componentDateKeySet.add(key);
@@ -159,87 +155,6 @@ async function getBulkConsumptionItems(
     return resultMap;
   }
 
-  // Step 5: Average rates bulk fetch
-  const averageRates = await db.query(
-    `SELECT component_key, average_rate, closing_qty 
-     FROM tbl_average_rate 
-     WHERE component_key IN (:componentIds)`,
-    {
-      replacements: { componentIds },
-      type: db.QueryTypes.SELECT,
-    },
-  );
-  const averageRateMap = new Map();
-  averageRates.forEach((row) => {
-    averageRateMap.set(row.component_key, {
-      average_rate: Number(row.average_rate || 0),
-      closing_qty: Number(row.closing_qty || 0),
-    });
-  });
-
-  // Step 6: ONE bulk rm_location inward query for weighted rate
-  const maxDateOverall = new Date(maxDateMs || Date.now());
-  const maxDateStr = moment(maxDateOverall).format("YYYY-MM-DD HH:mm:ss");
-
-  const bulkRmLocationData = await db.query(
-    `SELECT 
-        components_id,
-        insert_date,
-        (in_po_rate * exchange_rate * qty) + custom_duty + freight_charge AS amount,
-        qty
-     FROM rm_location 
-     WHERE components_id IN (:componentIds)
-       AND DATE_FORMAT(insert_date, '%Y-%m-%d %H:%i:%s') BETWEEN :startDate AND :maxDate
-       AND trans_type IN ('INWARD') 
-       AND (in_module != 'IN-FGRETURN')`,
-    {
-      replacements: {
-        componentIds,
-        maxDate: maxDateStr,
-        startDate: `2025-04-01 00:00:00`,
-      },
-      type: db.QueryTypes.SELECT,
-    },
-  );
-
-  // Step 7: Weighted rate calculate in memory per component+insert_date
-  const weightedRateMap = new Map();
-  componentDateKeyList.forEach(({ componentId, dateMs }) => {
-    const mapKey = `${componentId}_${dateMs}`;
-
-    const componentData = bulkRmLocationData.filter((row) => {
-      return (
-        row.components_id === componentId &&
-        new Date(row.insert_date).getTime() <= dateMs
-      );
-    });
-
-    const sum_amount = componentData.reduce(
-      (sum, row) => sum + Number(row.amount || 0),
-      0,
-    );
-    const sum_qty = componentData.reduce(
-      (sum, row) => sum + Number(row.qty || 0),
-      0,
-    );
-
-    const avgRate = averageRateMap.get(componentId) || {
-      average_rate: 0,
-      closing_qty: 0,
-    };
-    const numerator = sum_amount + avgRate.average_rate * avgRate.closing_qty;
-    const denominator = sum_qty + avgRate.closing_qty;
-    const weightedPurchaseRate =
-      denominator === 0 ? NaN : numerator / denominator;
-
-    weightedRateMap.set(
-      mapKey,
-      Number.isNaN(weightedPurchaseRate)
-        ? "0"
-        : weightedPurchaseRate.toFixed(2),
-    );
-  });
-
   // New WAR: compute newWeightedAverageRate per component + consumption date
   const newWARMap = new Map();
   if (componentIds.length > 0 && todateStr) {
@@ -250,7 +165,8 @@ async function getBulkConsumptionItems(
             componentId,
             insertDt,
             insertRowID,
-            db, // GST-resolved connection selects branch-specific DB and cutoff
+            false,
+            db,
           );
           const mapKey = `${componentId}_${dateMs}`; // unique per component + date
           newWARMap.set(mapKey, rate);
@@ -270,11 +186,6 @@ async function getBulkConsumptionItems(
     const rowDateMs = row.insert_date
       ? new Date(row.insert_date).getTime()
       : NaN;
-    const weightedRateKey = Number.isNaN(rowDateMs)
-      ? null
-      : `${row.components_id}_${rowDateMs}`;
-    const weightedRate =
-      (weightedRateKey && weightedRateMap.get(weightedRateKey)) || "0";
     const consumed = Number(row.qty) + Number(row.other_qty);
 
     const newWeightedRateKey = Number.isNaN(rowDateMs)
@@ -608,67 +519,6 @@ router.get("/manufacturing", async (req, res) => {
       });
     });
 
-    // Bulk average rates for SFG components
-    const sfgComponentKeys = [
-      ...new Set(sfgComponentData.map((d) => d.component_key).filter(Boolean)),
-    ];
-    const sfgAverageRateMap = new Map();
-    if (sfgComponentKeys.length > 0) {
-      const sfgAverageRates = await db.query(
-        `SELECT component_key, average_rate, closing_qty 
-         FROM tbl_average_rate 
-         WHERE component_key IN (:componentKeys)`,
-        {
-          replacements: { componentKeys: sfgComponentKeys },
-          type: db.QueryTypes.SELECT,
-        },
-      );
-      sfgAverageRates.forEach((row) => {
-        sfgAverageRateMap.set(row.component_key, {
-          average_rate: Number(row.average_rate || 0),
-          closing_qty: Number(row.closing_qty || 0),
-        });
-      });
-    }
-
-    // ONE bulk rm_location query for SFG weighted rates
-    const sfgMaxDate =
-      sfgComponentData.length > 0
-        ? new Date(
-            Math.max(
-              ...sfgComponentData.map((d) => new Date(d.jobworkDate).getTime()),
-            ),
-          )
-        : null;
-
-    const sfgMaxDateStr = sfgMaxDate
-      ? moment(sfgMaxDate).format("YYYY-MM-DD HH:mm:ss")
-      : null;
-
-    const sfgBulkRmLocationData =
-      sfgComponentKeys.length > 0 && sfgMaxDateStr
-        ? await db.query(
-            `SELECT 
-              components_id,
-              insert_date,
-              (in_po_rate * exchange_rate * qty) + custom_duty + freight_charge AS amount,
-              qty
-            FROM rm_location 
-            WHERE components_id IN (:componentKeys)
-              AND DATE_FORMAT(insert_date, '%Y-%m-%d %H:%i:%s') BETWEEN :startDate AND :maxDate
-              AND trans_type IN ('INWARD') 
-              AND (in_module != 'IN-FGRETURN')`,
-            {
-              replacements: {
-                componentKeys: sfgComponentKeys,
-                maxDate: sfgMaxDateStr,
-                startDate: `2025-04-01 00:00:00`,
-              },
-              type: db.QueryTypes.SELECT,
-            },
-          )
-        : [];
-
     // plannedQty = INWARD qty per MIN (getMinTransactionByDate inqty)
     const inTxnIds = Object.keys(groupedSfgInward);
     const inqtyMap = new Map();
@@ -750,7 +600,7 @@ router.get("/manufacturing", async (req, res) => {
       );
     }
 
-    // newWAR: pre-fetch lastNewWeightedAverageRate for all SFG inward consumption components
+    // newWAR: pre-fetch newWeightedAverageRate for all SFG inward consumption components
     const sfgNewWARMap = new Map();
     const sfgUniqueCompKeys = [
       ...new Set(sfgInwardStmt.map((r) => r.component_key).filter(Boolean)),
@@ -759,57 +609,32 @@ router.get("/manufacturing", async (req, res) => {
     if (sfgUniqueCompKeys.length > 0) {
       await Promise.all(
         sfgUniqueCompKeys.map(async (compKey) => {
-          const rate = await lastNewWeightedAverageRate(
+          const rate = await newWeightedAverageRate(
             compKey,
             todateFormatted,
-            db, // GST-resolved connection selects branch-specific DB and cutoff
+            null,
+            false,
+            db,
           );
           sfgNewWARMap.set(compKey, rate);
         }),
       );
     }
 
-    // Weighted rate calculate in memory for SFG (fallback when jw_material_challan me rate na ho)
+    // Fallback rate (jw_material_challan me rate na ho) — jobwork date par new WAR
     const sfgWeightedRateMap = new Map();
+    const sfgFallbackKeys = new Map();
     sfgComponentData.forEach(({ component_key, jobworkDate }) => {
       if (!component_key) return;
-
-      const dateMs = new Date(jobworkDate).getTime();
-      const mapKey = `${component_key}_${dateMs}`;
-
-      if (sfgWeightedRateMap.has(mapKey)) return;
-
-      const componentData = sfgBulkRmLocationData.filter(
-        (row) =>
-          row.components_id === component_key &&
-          new Date(row.insert_date).getTime() <= dateMs,
-      );
-
-      const sum_amount = componentData.reduce(
-        (sum, row) => sum + Number(row.amount || 0),
-        0,
-      );
-      const sum_qty = componentData.reduce(
-        (sum, row) => sum + Number(row.qty || 0),
-        0,
-      );
-
-      const avgRate = sfgAverageRateMap.get(component_key) || {
-        average_rate: 0,
-        closing_qty: 0,
-      };
-      const numerator = sum_amount + avgRate.average_rate * avgRate.closing_qty;
-      const denominator = sum_qty + avgRate.closing_qty;
-      const weightedPurchaseRate =
-        denominator === 0 ? NaN : numerator / denominator;
-
-      sfgWeightedRateMap.set(
-        mapKey,
-        Number.isNaN(weightedPurchaseRate)
-          ? "0"
-          : weightedPurchaseRate.toFixed(2),
-      );
+      const mapKey = `${component_key}_${new Date(jobworkDate).getTime()}`;
+      if (!sfgFallbackKeys.has(mapKey)) sfgFallbackKeys.set(mapKey, { component_key, jobworkDate });
     });
+    await Promise.all(
+      [...sfgFallbackKeys].map(async ([mapKey, { component_key, jobworkDate }]) => {
+        const rate = await newWeightedAverageRate(component_key, jobworkDate, null, false, db);
+        sfgWeightedRateMap.set(mapKey, rate.toFixed(2));
+      }),
+    );
 
     // Build SFG inward list: one voucher per MIN; transaction = in_transaction_id (getMinTransactionByDate); consumption = SFG-CONSUMPTION rows (getjwsfinwardConsumption)
     const sfgInwardList = Object.entries(groupedSfgInward).map(

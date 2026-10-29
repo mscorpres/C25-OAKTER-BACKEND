@@ -322,7 +322,7 @@ router.post(
         });
       }
 
-      const { newWeightedAverageRate, CUTOFF_DATE } = require("../../../helper/utils/newAvgRate");
+      const { newWeightedAverageRate } = require("../../../helper/utils/newAvgRate");
 
       const data = [];
       for (let i = 0; i < stmt1.length; i++) {
@@ -333,20 +333,11 @@ router.post(
           component_type = "SR";
         }
 
-        const isAfterCutoff =
-          new Date(stmt1[i].mfg_date).getTime() >
-          new Date(CUTOFF_DATE).getTime();
-
-        let weightedPurchaseRate;
-        if (isAfterCutoff) {
-          weightedPurchaseRate = await newWeightedAverageRate(
-            stmt1[i].component_key,
-            stmt1[i].mfg_date,
-            stmt1[i].row_id,
-          );
-        } else {
-          weightedPurchaseRate = parseFloat(stmt1[i].w_avr_rate) || 0;
-        }
+        const weightedPurchaseRate = await newWeightedAverageRate(
+          stmt1[i].component_key,
+          stmt1[i].mfg_date,
+          stmt1[i].row_id,
+        );
 
         data.push({
           serial_no: i + 1,

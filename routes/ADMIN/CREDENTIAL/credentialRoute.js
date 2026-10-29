@@ -42,7 +42,9 @@ const getCredentials = async (req, res, credential_key) => {
       return res.status(200).json({ success: true, data: data });
     }
   } catch (err) {
-    return helper.errorResponse(res, err);
+    console.log(err);
+    
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -53,7 +55,7 @@ router.get("/getfynCredentials",  async (req, res, next) => {
     await getCredentials(req, res, req.body.code);
     return;
   } catch (err) {
-    return helper.errorResponse(res, err);
+    return res.status(500).json({ success: false, error: err });
   }
 });
 
@@ -161,7 +163,7 @@ router.post("/updateCredentials",  async (req, res, next) => {
     return res.status(200).json({ success: true, message: "Updated Successfully!!!" });
   } catch (err) {
     await transaction.rollback();
-    return helper.errorResponse(res, err);
+   return res.status(500).json({ success: false, error: err.message });
   }
 });
 
