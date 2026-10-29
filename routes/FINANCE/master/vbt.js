@@ -580,10 +580,33 @@ router.get("/getData", [auth.isAuthorized], async (req, res) => {
     if (fetchVbt.length > 0) {
       for (let i = 0; i < fetchVbt.length; i++) {
 
-        let fetchPart = await invtDB.query("SELECT c_part_no AS partCode , c_name AS partName , component_key AS productKey FROM components WHERE component_key = :componentKey", {
-          replacements: { componentKey: fetchVbt[i].part_code },
-          type: invtDB.QueryTypes.SELECT
-        })
+         let fetchPart = await invtDB.query(`SELECT 
+      c_part_no AS partCode,
+      c_name AS partName,
+      component_key AS productKey
+   FROM components
+   WHERE component_key = :componentKey
+
+   UNION ALL
+
+   SELECT 
+      p_sku AS partCode,
+      p_name AS partName,
+      product_key AS productKey
+   FROM products
+   WHERE product_key = :componentKey
+     AND NOT EXISTS (
+       SELECT 1
+       FROM components
+       WHERE component_key = :componentKey
+     )`,
+  {
+    replacements: {
+      componentKey: fetchVbt[i].part_code
+    },
+    type: invtDB.QueryTypes.SELECT
+  }
+);
 
         let fetchFreight = await tallyDB.query("SELECT CONCAT('(', code , ')' , ladger_name) AS label , ledger_key AS value FROM tally_ledger WHERE ledger_key = :ledgerKey", {
           replacements: { ledgerKey: fetchVbt[i].vbt_freight_gl },
