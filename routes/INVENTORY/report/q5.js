@@ -235,7 +235,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         last_audit_remark,
         last_audit_date,
         last_audit_by,
-        weightedPurchaseRate: await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+        weightedPurchaseRate: await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
           component,
           given_date,
         ),

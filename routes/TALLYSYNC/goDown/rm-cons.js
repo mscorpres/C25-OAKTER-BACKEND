@@ -4,34 +4,8 @@ const Validator = require("validatorjs");
 const { invtDB } = require("../../../config/db/connection");
 const auth = require("../../../middleware/auth");
 const { getDatabaseByGST } = require("../../../helper/utils/gstDbMapper");
-const { lastNewWeightedAverageRate, calculateWARForTallyAPI } = require("../../../helper/utils/newAvgRate");
+const { newWeightedAverageRate, calculateWARForTallyAPI } = require("../../../helper/utils/newAvgRate");
 const { fgWeightedAverageRate } = require("../../../helper/utils/newFGavgRate");
-
-// Helper function to calculate weighted purchase rate using the same database connection
-async function getWeightedPurchaseRateWithDB(componentKey, insertDate, db) {
-  const dateStr = moment(insertDate).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
-  const query =
-    "SELECT COALESCE(SUM((in_po_rate * exchange_rate * qty) + custom_duty + freight_charge), 0) AS sum_amount, COALESCE(SUM(qty), 0) AS sum_qty FROM rm_location WHERE components_id = :componentKey AND DATE_FORMAT(insert_date, '%Y-%m-%d %H:%i:%s') BETWEEN :startDate AND :date AND trans_type IN('INWARD') AND (in_module != 'IN-FGRETURN')";
-  
-  const result = await db.query(query, {
-    replacements: { componentKey, date: dateStr, startDate: `2025-04-01 00:00:00` },
-    type: db.QueryTypes.SELECT,
-  });
-
-  let getAverageRate = await db.query("SELECT * FROM tbl_average_rate WHERE component_key = :componentKey", {
-    replacements: { componentKey },
-    type: db.QueryTypes.SELECT,
-  });
-
-  if (getAverageRate.length <= 0) {
-    getAverageRate = [{ average_rate: 0, closing_qty: 0 }];
-  }
-
-  const { sum_amount, sum_qty } = result[0];
-  const weightedPurchaseRate = (sum_amount + Number(getAverageRate[0].average_rate * getAverageRate[0].closing_qty)) / (sum_qty + Number(getAverageRate[0].closing_qty));
-  
-  return Number.isNaN(weightedPurchaseRate) ? 0 : weightedPurchaseRate.toFixed(2);
-}
 
 router.get("/consumption", async (req, res) => {
   try {
@@ -76,8 +50,6 @@ router.get("/consumption", async (req, res) => {
     // Determine location configuration based on GST
     const MAIN_BRANCH_GST = process.env.MAIN_BRANCH_GST;
     const isMainBranch = gst && MAIN_BRANCH_GST && gst.trim().toUpperCase() === MAIN_BRANCH_GST.trim().toUpperCase();
-    // WAR functions receive the GST-resolved db.
-    const useNewWAR = isMainBranch;
 
     if (!fromdate || !todate) {
       return res.status(400).json({
@@ -389,9 +361,7 @@ router.get("/consumption", async (req, res) => {
 
     // RM → CONSUMPTION (OUT)
     const type1Promises = rmToConsStmt.map(async (item) => {
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.row_id, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.row_id, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -436,9 +406,7 @@ router.get("/consumption", async (req, res) => {
       const voucherNumber = `C25/QCF${txnId}`;
 
       const inventoryEntryPromises = group.map(async (item) => {
-        const purchaseRate = useNewWAR
-          ? await lastNewWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), db)
-          : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+        const purchaseRate = await newWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), null, false, db);
 
         const qty = Number(item.qty || 0);
         const amount = qty * purchaseRate;
@@ -487,7 +455,7 @@ router.get("/consumption", async (req, res) => {
 
      
       const inventoryEntryPromises = group.map(async (item) => {
-        const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+        const purchaseRate = await newWeightedAverageRate(item.component_key, item.insert_date, null, false, db);
 
         const qty = Number(item.qty || 0);
         const amount = qty * purchaseRate;
@@ -533,9 +501,7 @@ router.get("/consumption", async (req, res) => {
       const voucherNumber = `PROD${dateKey}`;
 
       const inventoryEntryPromises = group.map(async (item) => {
-        const purchaseRate = useNewWAR
-          ? await lastNewWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), db)
-          : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+        const purchaseRate = await newWeightedAverageRate(item.component_key, to.format("YYYY-MM-DD"), null, false, db);
 
         const qty = Number(item.qty || 0);
         const amount = qty * purchaseRate;

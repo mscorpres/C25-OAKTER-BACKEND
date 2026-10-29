@@ -201,10 +201,10 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       // ////////////////// Rate
 
       // const openingRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-      const openingRate = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+      const openingRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
 
       // const closingRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-      const closingRate = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+      const closingRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
 
       const inwardRate = [];
       const outwardRate = [];
@@ -213,11 +213,11 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
       const todate1 = moment(todate).format("YYYY-MM-DD");
       while (fromdate1 <= todate1) {
         // const temp = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-        const temp = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+        const temp = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
         inwardRate.push(temp);
 
         // const temp1 = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-        const temp1 = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+        const temp1 = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
         outwardRate.push(temp1);
 
         // console.log(fromdate1, temp, temp1 , "============================");
@@ -493,10 +493,10 @@ router.post("/allVendor", [auth.isAuthorized], async (req, res) => {
             closingRate = compAvgRate[stmt_comp_item.jw_bom_part].closingRate;
           } else {
             // openingRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-            openingRate = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+            openingRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
 
             // closingRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-            closingRate = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+            closingRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
 
             const inwardRate = [];
             const outwardRate = [];
@@ -505,11 +505,11 @@ router.post("/allVendor", [auth.isAuthorized], async (req, res) => {
             const todate1 = moment(todate).format("YYYY-MM-DD");
             while (fromdate1 <= todate1) {
               // const temp = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-              const temp = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+              const temp = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
               inwardRate.push(temp);
 
               // const temp1 = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate_May2026(stmt_comp_item.jw_bom_part);
-              const temp1 = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(stmt_comp_item.jw_bom_part);
+              const temp1 = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(stmt_comp_item.jw_bom_part);
               outwardRate.push(temp1);
 
               // console.log(fromdate1, temp, temp1 , "============================");

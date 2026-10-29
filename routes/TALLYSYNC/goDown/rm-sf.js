@@ -6,32 +6,6 @@ const auth = require("../../../middleware/auth");
 const { getDatabaseByGST } = require("../../../helper/utils/gstDbMapper");
 const { calculateWARForTallyAPI } = require("../../../helper/utils/newAvgRate");
 
-// Helper function to calculate weighted purchase rate using the same database connection
-async function getWeightedPurchaseRateWithDB(componentKey, insertDate, db) {
-  const dateStr = moment(insertDate).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
-  const query =
-    "SELECT COALESCE(SUM((in_po_rate * exchange_rate * qty) + custom_duty + freight_charge), 0) AS sum_amount, COALESCE(SUM(qty), 0) AS sum_qty FROM rm_location WHERE components_id = :componentKey AND DATE_FORMAT(insert_date, '%Y-%m-%d %H:%i:%s') BETWEEN :startDate AND :date AND trans_type IN('INWARD') AND (in_module != 'IN-FGRETURN')";
-
-  const result = await db.query(query, {
-    replacements: { componentKey, date: dateStr, startDate: `2025-04-01 00:00:00` },
-    type: db.QueryTypes.SELECT,
-  });
-
-  let getAverageRate = await db.query("SELECT * FROM tbl_average_rate WHERE component_key = :componentKey", {
-    replacements: { componentKey },
-    type: db.QueryTypes.SELECT,
-  });
-
-  if (getAverageRate.length <= 0) {
-    getAverageRate = [{ average_rate: 0, closing_qty: 0 }];
-  }
-
-  const { sum_amount, sum_qty } = result[0];
-  const weightedPurchaseRate = (sum_amount + Number(getAverageRate[0].average_rate * getAverageRate[0].closing_qty)) / (sum_qty + Number(getAverageRate[0].closing_qty));
-
-  return Number.isNaN(weightedPurchaseRate) ? 0 : weightedPurchaseRate.toFixed(2);
-}
-
 router.get("/stock_journal", async (req, res) => {
   try {
     const { fromdate, todate } = req.query;
@@ -95,8 +69,6 @@ router.get("/stock_journal", async (req, res) => {
     // Set branch dynamically based on GST if not provided in query
     const MAIN_BRANCH_GST = process.env.MAIN_BRANCH_GST;
     const isMainBranch = gst && MAIN_BRANCH_GST && gst.trim().toUpperCase() === MAIN_BRANCH_GST.trim().toUpperCase();
-    // calculateWARForTallyAPI receives the GST-resolved db.
-    const useNewWAR = isMainBranch;
     if (!branch && isMainBranch) {
       branch = "BROAKTRC25";
     }
@@ -538,10 +510,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 1: Original RM to SF (InterGodownTrfr)
     const type1Promises = stmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -570,10 +539,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 2: RM to REJ (InterGodownTrfr - REJ godown)
     const type2Promises = rmToRejStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -603,10 +569,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 3: Production to Rejection (SF024)
     const type3Promises = prodToRejStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -636,10 +599,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 4: Rejection to Production
     const type4Promises = rejToProdStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -669,10 +629,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 5: Production to Store (PROD-RM) - Stock Journal
     const type5Promises = prodToStoreStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -702,10 +659,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 6: Rejection to Store (SF024 to SF999) - Stock Journal
     const type6Promises = rejToStoreStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
@@ -752,10 +706,7 @@ router.get("/stock_journal", async (req, res) => {
       const destinationLocation = firstItem.loc_in_name;
 
       const inventoryEntryPromises = group.map(async (item) => {
-        // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-        const purchaseRate = useNewWAR
-          ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-          : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+        const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
         const qty = Number(item.qty || 0) + Number(item.other_qty || 0);
         const amount = qty * purchaseRate;
@@ -789,10 +740,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Process Type 8: RM Return — voucher no = do challan number; remark = vendor, challan no, date, e-way bill
     const type8Promises = rmReturnStmt.map(async (item) => {
-      // const purchaseRate = await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
-      const purchaseRate = useNewWAR
-        ? await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db)
-        : await getWeightedPurchaseRateWithDB(item.component_key, item.insert_date, db);
+      const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.rm_location_id ?? item.ID, db);
 
       const qty = Number(item.qty || 0) + Number(item.other_qty || 0);
       const amount = qty * purchaseRate;
