@@ -761,7 +761,7 @@ router.get("/stock_journal", async (req, res) => {
       return {
         voucherNumber: voucherNum,
         voucherDate: moment(item.insert_date).format("DD-MM-YYYY"),
-        voucherType: "Stock Journal",
+        voucherType: "Job Work Return",
         remark: remark,
         destinationLocation: destinationLocation,
         inventoryEntry: {
