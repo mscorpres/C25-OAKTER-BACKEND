@@ -560,6 +560,11 @@ router.patch("/verify", [auth.isAuthorized], async (req, res) => {
   }
 })
 
+
+const getValueOrZero = (value) => {
+  return value == null || value === "--" ? 0 : value;
+};
+
 //get vbt data to edit
 router.get("/getData", [auth.isAuthorized], async (req, res) => {
   try {
@@ -680,7 +685,7 @@ router.get("/getData", [auth.isAuthorized], async (req, res) => {
           igstAmount: fetchVbt[i].vbt_igst,
           igst: fetchIgst[0],
           purchase_gl: fetchPurchaseGl[0],
-          tdsAssValue: fetchVbt[i].vbt_tds_ass_val,
+          tdsAssValue: getValueOrZero(fetchVbt[i].vbt_tds_ass_val),
           tdsAmount: fetchVbt[i].vbt_tds_amount,
           tds: fetchTds[0],
           // venCode: fetchVbt[i].ven_code,
