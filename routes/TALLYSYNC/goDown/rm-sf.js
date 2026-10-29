@@ -90,7 +90,7 @@ router.get("/stock_journal", async (req, res) => {
     // Query 1: RM to SF (InterGodownTrfr)
     // Determine location configuration based on GST
     // Exclude physical RM + SF024 virtual godown
-    const excludedLocations = ["20220106105354", "1765369161652"];
+    const excludedLocations = ["1789794097830"];
 
     // Set branch dynamically based on GST if not provided in query
     const MAIN_BRANCH_GST = process.env.MAIN_BRANCH_GST;
@@ -160,8 +160,8 @@ router.get("/stock_journal", async (req, res) => {
 
     // Query 2: RM to REJ (InterGodownTrfr - REJ godown)
     // Determine location configuration based on GST for Query 2
-    const query2LocIn = ["20220106105354", "1765369161652"];
-    const query2LocOutNotIn = ["1790338762381", "20220106105354", "1690877340601"];
+    const query2LocIn = ["1789794097830"];
+    const query2LocOutNotIn = ["1790338762381", "1789794097830", "1690877340601"];
 
     const rmToRejStmt = await db.query(
       `SELECT 
@@ -222,8 +222,8 @@ router.get("/stock_journal", async (req, res) => {
 
     // Query 3: Production to Rejection (SF024) - TRANSFER
     // Determine location configuration based on GST for Query 3
-    const query3LocIn = "20220106105354";
-    const query3LocOutNotIn = "20220106105354";
+    const query3LocIn = "1789794097830";
+    const query3LocOutNotIn = "1789794097830";
 
     const prodToRejStmt = await db.query(
       `SELECT 
@@ -276,9 +276,9 @@ router.get("/stock_journal", async (req, res) => {
 
     // Query 4: Rejection to Production - TRANSFER
     // Determine location configuration based on GST for Query 4
-    const query4LocOut = "20220106105354";
+    const query4LocOut = "1789794097830";
     // SF024 virtual 1765369161652; merge prior != + NOT IN lists
-    const query4LocInNotIn = ["20220106105354", "1765369161652", "1690877340601", "20210920102942", "1690871989601"];
+    const query4LocInNotIn = ["1789794097830", "1765369161652", "1690877340601", "20210920102942", "1690871989601"];
 
     const rejToProdStmt = await db.query(
       `SELECT 
@@ -333,7 +333,7 @@ router.get("/stock_journal", async (req, res) => {
     // Determine location configuration based on GST for Query 5
     const query5LocIn = "1690877340601";
     // loc_out: prod/self + physical RM + SF024 virtual (1765369161652)
-    const query5LocOutNotIn = ["1690877340601", "20220106105354", "1765369161652"];
+    const query5LocOutNotIn = ["1690877340601", "1789794097830", "1765369161652"];
 
     const prodToStoreStmt = await db.query(
       `SELECT 
@@ -386,7 +386,7 @@ router.get("/stock_journal", async (req, res) => {
 
     // Query 6: SF024 (Rejection) → SF999
     const query6LocIn = "1690877340601";
-    const query6LocOut = "20220106105354";
+    const query6LocOut = "1789794097830";
     const rejToStoreStmt = await db.query(
       `SELECT 
         rm_location.*,
