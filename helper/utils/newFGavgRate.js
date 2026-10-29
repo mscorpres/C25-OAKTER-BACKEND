@@ -78,10 +78,10 @@ function applyFgTxn(txn, state) {
 }
 
 // ─── p_sku / product_key resolve karo ───────────────────────────────────
-async function resolveKeys(skuKey) {
-  const [product] = await invtDB.query(
+async function resolveKeys(skuKey, db = invtDB) {
+  const [product] = await db.query(
     `SELECT p_sku, product_key FROM products WHERE p_sku = :code OR product_key = :code LIMIT 1`,
-    { replacements: { code: skuKey }, type: invtDB.QueryTypes.SELECT },
+    { replacements: { code: skuKey }, type: db.QueryTypes.SELECT },
   );
   return {
     pSku: product ? product.p_sku : skuKey,
@@ -90,10 +90,10 @@ async function resolveKeys(skuKey) {
 }
 
 // ─── SKU ki transactions (date/ID order me) + WAR calculate ─────────────
-async function calculateFgWAR(skuKey, dateCondition, extraReplacements) {
-  const { pSku, productKey } = await resolveKeys(skuKey);
+async function calculateFgWAR(skuKey, dateCondition, extraReplacements, db = invtDB) {
+  const { pSku, productKey } = await resolveKeys(skuKey, db);
 
-  const transactions = await invtDB.query(
+  const transactions = await db.query(
     `SELECT
               ID,
               type,
@@ -114,7 +114,7 @@ async function calculateFgWAR(skuKey, dateCondition, extraReplacements) {
           ORDER BY ${TXN_DATE} ASC, ID ASC`,
     {
       replacements: { pSku, productKey, ...extraReplacements },
-      type: invtDB.QueryTypes.SELECT,
+      type: db.QueryTypes.SELECT,
     },
   );
 
@@ -135,6 +135,7 @@ exports.fgWeightedAverageRate = async function (
   skuKey,
   date = null,
   currentID = null,
+  db = invtDB,
 ) {
   try {
     return await calculateFgWAR(
@@ -147,6 +148,7 @@ exports.fgWeightedAverageRate = async function (
         date: date || nowIST(),
         currentID: currentID ?? Number.MAX_SAFE_INTEGER,
       },
+      db,
     );
   } catch (error) {
     console.error("Error calculating FG WAR:", error);
@@ -157,11 +159,11 @@ exports.fgWeightedAverageRate = async function (
 // ════════════════════════════════════════════════════════════════════════
 // 2. Latest/last WAR — date na do to current IST tak
 // ════════════════════════════════════════════════════════════════════════
-exports.lastFGWeightedAverageRate = async function (skuKey, date = null) {
+exports.lastFGWeightedAverageRate = async function (skuKey, date = null, db = invtDB) {
   try {
     return await calculateFgWAR(skuKey, `AND ${TXN_DATE} <= :date`, {
       date: date || nowIST(),
-    });
+    }, db);
   } catch (error) {
     console.error("Error calculating last FG WAR:", error);
     throw error;

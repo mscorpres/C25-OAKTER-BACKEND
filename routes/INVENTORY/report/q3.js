@@ -8,7 +8,6 @@ const router = express.Router();
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 const helper = require("../../../helper/helper");
-const avgRate = require("../../../helper/utils/avgRate");
 
 const {
 	calculateFGRate,
@@ -699,17 +698,6 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			  }
 			}
   
-			const openingData = await invtDB.query(
-			  "SELECT average_rate, closing_qty, total_value FROM tbl_sku_average_rate WHERE sku_key = :productKey",
-			  {
-				replacements: { productKey: req.query.sku },
-				type: invtDB.QueryTypes.SELECT,
-			  },
-			);
-			if (!hasDateRange && openingData.length > 0) {
-			  openingQty = openingData[0].closing_qty || 0;
-			}
-  
 			let lastRate = 0;
 			const lastInTransaction = stmt2.find(
 			  (item) => item.transaction_type === "IN" && item.mfg_ref_transid_2,
@@ -730,10 +718,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				}
 			  } catch (e) {}
 			}
-			if (lastRate === 0 && openingData.length > 0) {
-			  lastRate = openingData[0].average_rate || 0;
-			}
-  
+
 			let stmt3 = await invtDB.query(
 			  "SELECT COALESCE(SUM(`DebitQTY`),0) as `DebitBalance` FROM (SELECT `fgout_approve_out_qty` DebitQTY FROM `mfg_production_3` WHERE `fgout_pro_apr_sku` = :productkey AND type = 'OUT' AND fg_out_type != '--' AND fg_status = 'ACTIVE') t",
 			  {

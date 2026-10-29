@@ -83,9 +83,10 @@ function isOutwardTxn(txn) {
  * @param {string} componentKey
  * @param {string} extraCondition - extra WHERE clause (date filter)
  * @param {object} extraReplacements
+ * @param {object} db - sequelize connection (default invtDB)
  */
-async function fetchTransactions(componentKey, extraCondition = "", extraReplacements = {}) {
-  return invtDB.query(
+async function fetchTransactions(componentKey, extraCondition = "", extraReplacements = {}, db = invtDB) {
+  return db.query(
     `SELECT
               rm_location.ID,
               rm_location.trans_type,
@@ -109,7 +110,7 @@ async function fetchTransactions(componentKey, extraCondition = "", extraReplace
           ORDER BY rm_location.insert_date ASC, rm_location.ID ASC`,
     {
       replacements: { componentKey, ...extraReplacements },
-      type: invtDB.QueryTypes.SELECT,
+      type: db.QueryTypes.SELECT,
     },
   );
 }
@@ -164,6 +165,7 @@ function runWAR(transactions) {
  * @param {number|null} currentID - Optional — date wale exact time par
  *        sirf is rm_location.ID tak (us row ko include karke)
  * @param {boolean} withStock - true → { rate, qty } (running stock qty bhi)
+ * @param {object} db - Optional — branch DB (TallySync GST wise), default invtDB
  * @returns {Promise<number|{ rate: number, qty: number }>}
  */
 exports.newWeightedAverageRate = async function (
@@ -171,6 +173,7 @@ exports.newWeightedAverageRate = async function (
   date = null,
   currentID = null,
   withStock = false,
+  db = invtDB,
 ) {
   try {
     if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -187,7 +190,7 @@ exports.newWeightedAverageRate = async function (
       condition = `AND rm_location.insert_date <= :date`;
     }
 
-    const transactions = await fetchTransactions(componentKey, condition, { date, currentID });
+    const transactions = await fetchTransactions(componentKey, condition, { date, currentID }, db);
     const result = runWAR(transactions);
     return withStock ? result : result.rate;
   } catch (error) {

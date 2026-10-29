@@ -1281,8 +1281,7 @@ router.post("/godownStocksProduct", [auth.isAuthorized], async (req, res) => {
       });
     }
 
-    const avgRate = require("../../../../helper/utils/avgRate");
-    const avr_rate = await avgRate.getWeightedSKURate(
+    const avr_rate = await require("../../../../helper/utils/newFGavgRate").lastFGWeightedAverageRate(
       req.body.product,
       moment(new Date()).format("YYYY-MM-DD HH:mm:ss")
     );
@@ -1642,7 +1641,7 @@ router.post("/report_fg2fg_same", [auth.isAuthorized], async (req, res) => {
     }
 
     if (stmt1.length > 0) {
-      const avgRate = require("../../../../helper/utils/avgRate");
+      const { lastFGWeightedAverageRate } = require("../../../../helper/utils/newFGavgRate");
       const data = [];
       for (let i = 0; i < stmt1.length; i++) {
         const item = stmt1[i];
@@ -1652,7 +1651,7 @@ router.post("/report_fg2fg_same", [auth.isAuthorized], async (req, res) => {
         let weightedSKURate = 0;
         if (item.product_key) {
           try {
-            weightedSKURate = await avgRate.getWeightedSKURate(item.product_key, txDate);
+            weightedSKURate = await lastFGWeightedAverageRate(item.product_key, txDate);
           } catch (e) {
             weightedSKURate = 0;
           }
@@ -2677,7 +2676,7 @@ router.post("/transferFG2FG", [auth.isAuthorized], async (req, res) => {
       // Weighted rate at this moment (for IN entry)
       let fgRate = 0;
       try {
-        fgRate = await avgRate.getWeightedSKURate(product[i], nowFull);
+        fgRate = await require("../../../../helper/utils/newFGavgRate").lastFGWeightedAverageRate(product[i], nowFull);
       } catch (e) {
         fgRate = 0;
       }

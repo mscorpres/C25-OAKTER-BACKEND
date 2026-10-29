@@ -1629,7 +1629,7 @@ router.post(
               let componentWeightedRate = 0;
               try {
                 const consumptionDate = moment(insertDate).format("YYYY-MM-DD HH:mm:ss");
-                componentWeightedRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate(
+                componentWeightedRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
                   req.body.component[i],
                   consumptionDate
                 );
