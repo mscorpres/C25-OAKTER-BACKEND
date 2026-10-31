@@ -409,6 +409,71 @@ router.post(
   }
 );
 
+
+
+// FETCH LOCATION ALLOTED BY KEY
+router.post(
+  "/fetch_location_details",
+  [auth.isAuthorized],
+  async (req, res) => {
+    let validation = new Validator(req.body, {
+      location_key: "required",
+    });
+
+    if (validation.fails()) {
+      return res.json({
+        status: "error",
+        success: false,
+        message: helper.firstErrorValidatorjs(validation),
+      });
+    }
+
+    try {
+      let stmt = await invtDB.query(
+        `SELECT 
+          location_main.*,
+          loc2.loc_name AS parent_loc_name
+        FROM location_main
+        LEFT JOIN location_main AS loc2 
+          ON location_main.parents_id = loc2.location_key
+        WHERE location_main.location_key = :key`,
+        {
+          replacements: { key: req.body.location_key },
+          type: invtDB.QueryTypes.SELECT,
+        }
+      );
+
+      if (stmt.length > 0) {
+        stmt = stmt.map((item) => ({
+          ...item,
+          insert_date:
+            item.insert_date && item.insert_date !== "--"
+              ? moment(item.insert_date).format("DD-MM-YYYY")
+              : "--",
+          update_date:
+            item.update_date && item.update_date !== "--"
+              ? moment(item.update_date).format("DD-MM-YYYY")
+              : "--",
+        }));
+
+        return res.json({
+          status: "success",
+          success: true,
+          data: stmt,
+        });
+      } else {
+        return res.json({
+          status: "error",
+          success: false,
+          message: "No data found",
+        });
+      }
+    } catch (error) {
+      return helper.errorResponse(res, error);
+    }
+  }
+);
+
 // UPDATE LOCATION ALLOTTED
 router.post(
   "/location_allotted_update",
