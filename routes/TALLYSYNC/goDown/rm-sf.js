@@ -327,7 +327,7 @@ router.get("/stock_journal", async (req, res) => {
       LEFT JOIN units 
         ON components.c_uom = units.units_id
       LEFT JOIN all_sub_groups 
-        ON components.c_sub_group = all_sub_groups.sub_group_id
+        ON components.c_sub_group = all_sub_groups.sub_group_id  
       LEFT JOIN admin_login 
         ON rm_location.insert_by = admin_login.CustID
       LEFT JOIN location_main 
@@ -574,7 +574,7 @@ router.get("/stock_journal", async (req, res) => {
       const qty = Number(item.qty || 0);
       const amount = qty * purchaseRate;
 
-      const sourceLocationCode = "C25_SF";
+      const sourceLocationCode = "GDWP001_C25";
       const destinationLocation = "C25_Rejection";
       const voucherNum = `C25SF/SF024/${moment(item.insert_date).format("DDMMYY")}`;
 
@@ -605,7 +605,7 @@ router.get("/stock_journal", async (req, res) => {
       const amount = qty * purchaseRate;
 
       const sourceLocationCode = "C25_Rejection";
-      const destinationLocation = "C25_SF";
+      const destinationLocation = "GDWP001_C25";
       const voucherNum = `C25REJ/SF/${moment(item.insert_date).format("DDMMYY")}`;
 
       return {
