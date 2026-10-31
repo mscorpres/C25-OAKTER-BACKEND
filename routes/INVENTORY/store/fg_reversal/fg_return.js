@@ -6,7 +6,7 @@ let { invtDB } = require("../../../../config/db/connection");
 const auth = require("../../../../middleware/auth");
 const permission = require("../../../../middleware/permission");
 const Validator = require("validatorjs");
-const FG_RETURN_TRANSFER_LOCATION = "1788943506425";
+const FG_RETURN_TRANSFER_LOCATION = "1788936256961";
 
 
 async function getFgTransferStockQty(sku, branch, locationKey, transaction) {
