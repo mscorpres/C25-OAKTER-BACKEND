@@ -97,24 +97,30 @@ function getConsigneeConfigByGst(gstNo) {
 function buildItemQueryByVBT(inventoryDbName) {
   return `
     SELECT DISTINCT
-      components.c_name AS partname,
-      components.c_part_no AS partno,
-      all_sub_groups.sub_group_name AS subgroupname,
+      COALESCE(NULLIF(components.c_name, ''), products.p_name) AS partname,
+      COALESCE(NULLIF(components.c_part_no, ''), products.p_sku) AS partno,
+      CASE 
+        WHEN products.product_key IS NOT NULL AND components.component_key IS NULL 
+          THEN 'Finished (Products)'
+        ELSE COALESCE(NULLIF(all_sub_groups.sub_group_name, ''), 'Finished (Products)')
+      END AS subgroupname,
       units.units_name AS uom,
-      components.c_hsn AS hsn,
-      components.c_gst AS gst,
-      components.c_tax_type AS taxtype
+      COALESCE(NULLIF(components.c_hsn, ''), tally_vbt.hsn_code) AS hsn,
+      COALESCE(NULLIF(components.c_gst, ''), tally_vbt.vbt_gst_rate) AS gst,
+      COALESCE(NULLIF(components.c_tax_type, ''), 'Local') AS taxtype
     FROM tally_vbt
-    INNER JOIN ${inventoryDbName}.components AS components 
+    LEFT JOIN ${inventoryDbName}.components AS components 
       ON components.component_key = tally_vbt.part_code
+    LEFT JOIN ${inventoryDbName}.products AS products 
+      ON products.product_key = tally_vbt.part_code
     LEFT JOIN ${inventoryDbName}.units AS units 
-      ON units.units_id = components.c_uom
+      ON units.units_id = COALESCE(NULLIF(components.c_uom, ''), products.p_uom)
     LEFT JOIN ${inventoryDbName}.all_sub_groups AS all_sub_groups 
       ON all_sub_groups.sub_group_id = components.c_sub_group
     WHERE tally_vbt.vbt_status != 'DE'
       AND (DATE_FORMAT(tally_vbt.insert_date, '%Y-%m-%d') BETWEEN :date1 AND :date2)
-      AND components.c_is_enabled = 'Y'
-    ORDER BY components.c_name ASC
+      AND (components.c_is_enabled = 'Y' OR products.is_enabled = 'Y')
+    ORDER BY partname ASC
   `;
 }
 
