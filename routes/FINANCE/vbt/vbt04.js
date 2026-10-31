@@ -1196,143 +1196,285 @@ router.post("/debit_vbt04", [auth.isAuthorized], async (req, res) => {
 
 //vbt 4 update api
 router.put("/update", [auth.isAuthorized], async (req, res) => {
+  // 1. Run synchronous validations BEFORE starting a DB transaction
+  let validation = new Validator(req.body, {
+    vbtKey: "required",
+    ven_code: "required",
+    ven_address: "required",
+    invoice_no: "required",
+    invoice_date: "required",
+    comment: "required",
+    vbt_gstin: "required",
+    bill_amount: "required",
+    inrPrice: "required",
+    cifPrice: "required",
+    cifValue: "required",
+  });
+
+  if (validation.fails()) {
+    return res
+      .status(403)
+      .send(Object.values(validation.errors.all())[0].join());
+  }
+
+  if (
+    moment(req.body.invoice_date, "DD-MM-YYYY").isAfter(
+      moment(req.body.eff_date, "DD-MM-YYYY")
+    )
+  ) {
+    return res.json({
+      status: "error",
+      success: false,
+      message: "Invoice date cannot be greater than effective date",
+    });
+  }
+
+  let comp_length =
+    req.body.component?.length || req.body.part_code?.length || 0;
+  if (comp_length === 0) {
+    return res.status(403).send("No line items provided for update");
+  }
+
+  let total_debit = 0;
+  let total_credit = 0;
+
+  for (let i = 0; i < comp_length; i++) {
+    let row_valid = new Validator(
+      {
+        cgst_gl: req.body.cgst_gl[i],
+        sgst_gl: req.body.sgst_gl[i],
+        igst_gl: req.body.igst_gl[i],
+      },
+      {
+        cgst_gl: "required",
+        sgst_gl: "required",
+        igst_gl: "required",
+      }
+    );
+    if (row_valid.fails()) {
+      return res
+        .status(403)
+        .send(Object.values(row_valid.errors.all())[0].join());
+    }
+
+    if (
+      Number(req.body.tds_amounts[i]) != 0 &&
+      req.body.tds_gl_code[i] == "--"
+    ) {
+      return res.json({
+        status: "error",
+        success: false,
+        message: "TDS Gl not selected",
+      });
+    }
+
+    total_debit +=
+      Number(req.body.cgsts[i] || 0) +
+      Number(req.body.igsts[i] || 0) +
+      Number(req.body.sgsts[i] || 0) +
+      Number(req.body.freight[i] || 0) +
+      Number(req.body.bill_qty[i] || 0) * Number(req.body.in_rates[i] || 0);
+
+    total_credit +=
+      Number(req.body.ven_amounts[i] || 0) +
+      Number(req.body.tds_amounts[i] || 0);
+  }
+
+  if (req.body.roundOffSign == "-") {
+    total_debit -= Number(req.body.roundOffValue || 0);
+  } else {
+    total_debit += Number(req.body.roundOffValue || 0);
+  }
+
+  let total_ven_ammount = 0;
+  for (let i = 0; i < comp_length; i++) {
+    total_ven_ammount +=
+      Number(req.body.ven_amounts[i] || 0) +
+      Number(req.body.tds_amounts[i] || 0);
+  }
+
+  if (
+    Math.abs(
+      Number(req.body.bill_amount) -
+        Number(Number(total_ven_ammount).toFixed(2))
+    ) != 0
+  ) {
+    return res
+      .status(403)
+      .send(
+        `Bill amount ${req.body.bill_amount} and Vendor amount ${total_ven_ammount} are not equal`
+      );
+  }
+
+  if (
+    Math.abs(
+      Number(Number(total_credit).toFixed(2)) -
+        Number(Number(total_debit).toFixed(2))
+    ) != 0
+  ) {
+    return res
+      .status(403)
+      .send(`Debit ${total_debit} and Credit ${total_credit} are not equal`);
+  }
+
+  // 2. Start Transaction after validation passes
   const transaction = await tallyDB.transaction();
 
-
   try {
-    let validation = new Validator(req.body, {
-      vbtKey: "required",
-      ven_code: "required",
-      ven_address: "required",
-      invoice_no: "required",
-      invoice_date: "required",
-      comment: "required",
-      vbt_gstin: "required",
-      invoice_no: "required",
-      bill_amount: "required",
-      inrPrice: "required",
-      cifPrice: "required",
-      cifValue: "required",
-    });
+    const vbt_key = req.body.vbtKey;
 
-    if (validation.fails()) {
-      return res.status(403).send(Object.values(validation.errors.all())[0].join());
-    }
-
-    let checkSettled = await tallyDB.query("SELECT * FROM tally_ap WHERE ap_ref_no = :vbtKey", {
-      replacements: {
-        vbtKey: req.body.vbtKey
-      },
-      type: tallyDB.QueryTypes.SELECT
-    });
+    let checkSettled = await tallyDB.query(
+      "SELECT * FROM tally_ap WHERE ap_ref_no = :vbtKey",
+      {
+        replacements: { vbtKey: vbt_key },
+        type: tallyDB.QueryTypes.SELECT,
+        transaction,
+      }
+    );
 
     if (checkSettled.length > 0) {
-      return res.json({ status: "error", success: false, message: "Oops ! This VBT is already settled" });
+      await transaction.rollback();
+      return res.json({
+        status: "error",
+        success: false,
+        message: "Oops ! This VBT is already settled",
+      });
     }
 
-    if (moment(req.body.invoice_date, "DD-MM-YYYY") > moment(req.body.eff_date, "DD-MM-YYYY")) {
-      return res.json({ status: "error", success: false, message: "Invoice date cannot be greater than effective date" });
-    }
-
-    let comp_length = req.body.component.length;
-    let total_debit = 0;
-    let total_credit = 0;
-
-    for (let i = 0; i < comp_length; i++) {
-      let row_valid = new Validator(
-        {
-          cgst_gl: req.body.cgst_gl[i],
-          sgst_gl: req.body.sgst_gl[i],
-          igst_gl: req.body.igst_gl[i],
-        },
-        {
-          cgst_gl: "required",
-          sgst_gl: "required",
-          igst_gl: "required",
-        }
-      );
-      if (row_valid.fails()) {
-        return res.status(403).send(Object.values(row_valid.errors.all())[0].join());
+    // Fetch existing VBT04 rows to update in-place
+    const existingRows = await tallyDB.query(
+      "SELECT * FROM tally_vbt WHERE vbt_key = :vbtKey AND vbt_type = 'VBT04' AND (vbt_debit_key = '--' OR vbt_debit_key = '' OR vbt_debit_key IS NULL) ORDER BY ID ASC",
+      {
+        replacements: { vbtKey: vbt_key },
+        type: tallyDB.QueryTypes.SELECT,
+        transaction,
       }
-      total_debit += Number(req.body.cgsts[i]) + Number(req.body.igsts[i]) + Number(req.body.sgsts[i]) + Number(req.body.freight[i]) + Number(req.body.bill_qty[i]) * Number(req.body.in_rates[i]);
+    );
 
-      total_credit += Number(req.body.ven_amounts[i]) + Number(req.body.tds_amounts[i]);
+    if (existingRows.length === 0) {
+      await transaction.rollback();
+      return res.json({
+        status: "error",
+        success: false,
+        message: "VBT record not found for update",
+      });
     }
 
-    if (req.body.roundOffSign == "-") {
-      total_debit -= Number(req.body.roundOffValue);
-    } else {
-      total_debit += Number(req.body.roundOffValue);
+    if (existingRows.length !== comp_length) {
+      await transaction.rollback();
+      return res.json({
+        status: "error",
+        success: false,
+        message: `Row count mismatch: found ${existingRows.length} existing items, but received ${comp_length} items to update. You cannot add extra items here.`,
+      });
     }
 
-    let total_ven_ammount = 0;
-    for (let i = 0; i < comp_length; i++) {
-      total_ven_ammount += (Number(req.body.ven_amounts[i]) + Number(req.body.tds_amounts[i]));
-    }
-
-    if (Math.abs(Number(req.body.bill_amount) - Number(total_ven_ammount).toFixed(2)) != 0) {
-      return res.status(403).send(`Bill amount ${req.body.bill_ammount} and Vendor amount ${total_ven_ammount} are not equal`);
-    }
-
-    if (Math.abs(Number(Number(total_credit).toFixed(2)) - Number(Number(total_debit).toFixed(2))) != 0) {
-      return res.status(403).send(`Debit ${total_debit} and Credit ${total_credit} are not equal`);
-    }
-
-    const vbt_key = req.body.vbtKey;
-    const updatedAt = moment(new Date()).tz("Asia/Kolkata").format("YYYY-MM-DD HH:mm:ss");
+    const updatedAt = moment(new Date())
+      .tz("Asia/Kolkata")
+      .format("YYYY-MM-DD HH:mm:ss");
     const updatedBy = req.logedINUser;
 
-    const insert_data = req.body.insertDate;
-    const insert_by = req.body.insertBy;
+    const insert_data = req.body.insertDate || existingRows[0].insert_date;
+    const insert_by = req.body.insertBy || existingRows[0].insert_by;
 
-    const effective_data = moment(req.body.eff_date, "DD-MM-YYYYY").tz("Asia/Kolkata").format("YYYY-MM-DD");
+    const effective_data = moment(req.body.eff_date, "DD-MM-YYYY")
+      .tz("Asia/Kolkata")
+      .format("YYYY-MM-DD");
 
-    let deleteVbt = await tallyDB.query("DELETE FROM tally_vbt WHERE vbt_key = :vbtKey AND vbt_type = 'VBT04' AND vbt_debit_key = '--'", {
-      replacements: { vbtKey: vbt_key },
-      type: tallyDB.QueryTypes.DELETE,
-      transaction: transaction
-    });
+    // Clear old ledger entries for VBT04 before re-inserting
+    await tallyDB.query(
+      "DELETE FROM tally_ledger_data WHERE module_used = :vbtKey AND which_module = 'VBT04' AND (debit_key = '--' OR debit_key = '' OR debit_key IS NULL)",
+      {
+        replacements: { vbtKey: vbt_key },
+        type: tallyDB.QueryTypes.DELETE,
+        transaction,
+      }
+    );
 
-    let deleteTallyLedgerData = await tallyDB.query("DELETE FROM tally_ledger_data WHERE module_used = :vbtKey AND which_module = 'VBT04' AND debit_key = '--'", {
-      replacements: { vbtKey: vbt_key },
-      type: tallyDB.QueryTypes.DELETE,
-      transaction: transaction
-    });
-
-    let lastInsertedID;
+    let lastAffectedID = null;
 
     for (let i = 0; i < comp_length; i++) {
-      let comp_key = await invtDB.query("SELECT `component_key` FROM `components` WHERE `c_part_no` = :p_no", {
-        replacements: { p_no: req.body.part_code[i] },
-        type: invtDB.QueryTypes.SELECT,
-      });
+      let partKey = existingRows[i].part_code;
+      let comp_key = await invtDB.query(
+        "SELECT `component_key` FROM `components` WHERE `c_part_no` = :p_no OR `component_key` = :p_no LIMIT 1",
+        {
+          replacements: { p_no: req.body.part_code[i] },
+          type: invtDB.QueryTypes.SELECT,
+        }
+      );
 
-      let stmt = await tallyDB.query(
-        "INSERT INTO `tally_vbt` ( `part_code`, po_number, project_id, `vbt_inqty`,`vbt_bill_qty`, `vbt_inrate`, `vbt_taxable_value`, `hsn_code`, `vbt_gst_type`, `vbt_gst_rate`, `freight`, `vbt_freight_gl`, `vbp_gst_ass_value`, `vbt_cgst`,`vbt_cgst_gl`, `vbt_sgst`,`vbt_sgst_gl`, `vbt_igst`,`vbt_igst_gl`, `gl_code`, `tds_code`, `tds_gl`, `vbt_ven_ammount`, `vbt_key`, `insert_by`, `insert_date`, `min_id` , inrPrice , cifPrice , cifValue ,`vbt_tds_ass_val`,`vbt_tds_amount`, `ven_address`, `vbt_invoice_no`, `vbt_invoice_date`, `vbt_comment`,`ven_code`, `vbt_gstin`,`vbt_type` , `effective_date` , `item_description` , update_date , update_by , billAmount ) VALUES (:part_code,:po_number, :project_id, :in_qtys, :vbt_bill_qty, :in_rates, :taxable_values, :hsn_code, :in_gst_types, :vbt_gst_rate,  :freight, :freight_gl, :gst_ass_vals, :cgsts, :cgsts_gl, :sgsts, :sgsts_gl, :igsts, :igsts_gl, :g_l_codes, :tds_codes, :tds_gl, :ven_amounts, :vbt_key, :insert_by, :insert_date, :min_id , :inrPrice, :cifPrice, :cifValue, :tds_ass_vals, :tds_amounts,:ven_address, :invoice_no, :invoice_date, :comment, :ven_code, :vbt_gstin, 'VBT04' , :effective_date , :item_description , :update_date , :update_by , :billAmount)",
+      if (comp_key.length > 0) {
+        partKey = comp_key[0].component_key;
+      }
+
+      const targetId = existingRows[i].ID;
+      lastAffectedID = targetId;
+
+      await tallyDB.query(
+        `UPDATE tally_vbt SET
+          part_code = :part_code,
+          po_number = :po_number,
+          project_id = :project_id,
+          vbt_inqty = :in_qtys,
+          vbt_bill_qty = :vbt_bill_qty,
+          vbt_inrate = :in_rates,
+          vbt_taxable_value = :taxable_values,
+          hsn_code = :hsn_code,
+          vbt_gst_type = :in_gst_types,
+          vbt_gst_rate = :vbt_gst_rate,
+          freight = :freight,
+          vbt_freight_gl = :freight_gl,
+          vbp_gst_ass_value = :gst_ass_vals,
+          vbt_cgst = :cgsts,
+          vbt_cgst_gl = :cgsts_gl,
+          vbt_sgst = :sgsts,
+          vbt_sgst_gl = :sgsts_gl,
+          vbt_igst = :igsts,
+          vbt_igst_gl = :igsts_gl,
+          gl_code = :g_l_codes,
+          tds_code = :tds_codes,
+          tds_gl = :tds_gl,
+          vbt_ven_ammount = :ven_amounts,
+          min_id = :min_id,
+          inrPrice = :inrPrice,
+          cifPrice = :cifPrice,
+          cifValue = :cifValue,
+          vbt_tds_ass_val = :tds_ass_vals,
+          vbt_tds_amount = :tds_amounts,
+          ven_address = :ven_address,
+          vbt_invoice_no = :invoice_no,
+          vbt_invoice_date = :invoice_date,
+          vbt_comment = :comment,
+          ven_code = :ven_code,
+          vbt_gstin = :vbt_gstin,
+          effective_date = :effective_date,
+          item_description = :item_description,
+          update_date = :update_date,
+          update_by = :update_by,
+          billAmount = :billAmount,
+          round_off_sign = '--',
+          round_off_amt = ''
+        WHERE ID = :id`,
         {
           replacements: {
+            id: targetId,
             po_number: req.body.poNumber?.[i] ? req.body.poNumber[i] : "",
             project_id: req.body.projectID?.[i] ? req.body.projectID[i] : "",
-            vbt_key: vbt_key,
             in_qtys: req.body.in_qtys[i],
             vbt_bill_qty: req.body.bill_qty[i],
             in_rates: req.body.in_rates[i],
             taxable_values: req.body.taxable_values[i],
-            part_code: comp_key[0].component_key,
+            part_code: partKey,
             hsn_code: req.body.hsn_code[i],
             in_gst_types: req.body.in_gst_types[i],
             freight: req.body.freight[i],
-            // freight value is going in purchase gl
             freight_gl: req.body.g_l_codes[i],
             gst_ass_vals: req.body.gst_ass_vals[i],
             cgsts: req.body.cgsts[i],
-            // cgsts_gl: "TP274965899340",
             cgsts_gl: req.body.cgst_gl[i],
             sgsts: req.body.sgsts[i],
-            // sgsts_gl: "TP385675494002",
             sgsts_gl: req.body.sgst_gl[i],
             igsts: req.body.igsts[i],
-            // igsts_gl: "TP486973272469",
             igsts_gl: req.body.igst_gl[i],
             g_l_codes: req.body.g_l_codes[i],
             tds_codes: req.body.tds_codes[i],
@@ -1341,13 +1483,10 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
             tds_amounts: req.body.tds_amounts[i],
             ven_amounts: Number(req.body.ven_amounts[i]).toFixed(2),
             vbt_gst_rate: req.body.vbp_gst_rate[i],
-            insert_by: insert_by,
-            insert_date: insert_data,
             min_id: req.body.min_key[i],
             inrPrice: req.body.inrPrice[i],
             cifPrice: req.body.cifPrice[i],
             cifValue: req.body.cifValue[i],
-            // Header
             ven_address: req.body.ven_address,
             invoice_no: req.body.invoice_no,
             invoice_date: req.body.invoice_date,
@@ -1355,116 +1494,146 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
             ven_code: req.body.ven_code,
             vbt_gstin: req.body.vbt_gstin,
             effective_date: effective_data,
-            item_description: req.body.item_description?.[i] ? req.body.item_description[i] : "",
+            item_description: req.body.item_description?.[i]
+              ? req.body.item_description[i]
+              : "",
             update_date: updatedAt,
             update_by: updatedBy,
             billAmount: req.body.bill_amount,
           },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
+          type: tallyDB.QueryTypes.UPDATE,
+          transaction,
         }
-      ); //End Insert VBT
+      );
 
-      lastInsertedID = stmt[0];
-
+      // Re-insert Ledger Entries
       if (Number(req.body.cgsts[i]) > 0) {
-        let insert_cgst = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module,  :effective_date, :insert_by)", {
-          replacements: {
-            // ladger_key: "TP274965899340",
-            ladger_key: req.body.cgst_gl[i],
-            debit: req.body.cgsts[i],
-            credit: "0",
-            module_used: vbt_key,
-            insert_date: insert_data,
-            which_module: "VBT04",
-            effective_date: effective_data,
-            insert_by: insert_by,
-          },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.cgst_gl[i],
+              debit: req.body.cgsts[i],
+              credit: "0",
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
       }
+
       if (Number(req.body.igsts[i]) > 0) {
-        let insert_igst = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module,  :effective_date, :insert_by)", {
-          replacements: {
-            // ladger_key: "TP486973272469",
-            ladger_key: req.body.igst_gl[i],
-            debit: req.body.igsts[i],
-            credit: "0",
-            module_used: vbt_key,
-            insert_date: insert_data,
-            which_module: "VBT04",
-            effective_date: effective_data,
-            insert_by: insert_by,
-          },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.igst_gl[i],
+              debit: req.body.igsts[i],
+              credit: "0",
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
       }
 
       if (Number(req.body.sgsts[i]) > 0) {
-        let insert_igst = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
-          replacements: {
-            // ladger_key: "TP385675494002",
-            ladger_key: req.body.sgst_gl[i],
-            debit: req.body.sgsts[i],
-            credit: "0",
-            module_used: vbt_key,
-            insert_date: insert_data,
-            which_module: "VBT04",
-            effective_date: effective_data,
-            insert_by: insert_by,
-          },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.sgst_gl[i],
+              debit: req.body.sgsts[i],
+              credit: "0",
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
       }
-      // freight value is going in purchase gl
+
       if (Number(req.body.freight[i]) > 0) {
-        let insert_igst = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module,  :effective_date, :insert_by)", {
-          replacements: {
-            ladger_key: req.body.g_l_codes[i],
-            debit: req.body.freight[i],
-            credit: "0",
-            module_used: vbt_key,
-            insert_date: insert_data,
-            which_module: "VBT04",
-            effective_date: effective_data,
-            insert_by: insert_by,
-          },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.g_l_codes[i],
+              debit: req.body.freight[i],
+              credit: "0",
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
       }
-      // GL
+
       if (Number(req.body.taxable_values[i]) > 0) {
-        let insert_gst_ass_vals = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
-          replacements: {
-            ladger_key: req.body.g_l_codes[i],
-            debit: req.body.taxable_values[i],
-            credit: "0",
-            module_used: vbt_key,
-            insert_date: insert_data,
-            which_module: "VBT04",
-            effective_date: effective_data,
-            insert_by: insert_by,
-          },
-          type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.g_l_codes[i],
+              debit: req.body.taxable_values[i],
+              credit: "0",
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
       }
+
       if (req.body.tds_amounts[i] != 0) {
+        await tallyDB.query(
+          "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+          {
+            replacements: {
+              ladger_key: req.body.tds_gl_code[i],
+              debit: "0",
+              credit: req.body.tds_amounts[i],
+              module_used: vbt_key,
+              insert_date: insert_data,
+              which_module: "VBT04",
+              effective_date: effective_data,
+              insert_by: insert_by,
+            },
+            type: tallyDB.QueryTypes.INSERT,
+            transaction,
+          }
+        );
+      }
 
-        if (req.body.tds_gl_code[i] == "--") {
-          await transaction.rollback();
-          return res.json({ status: "error", success: false, message: "TDS Gl not selected" });
-        }
-
-        let insert_tds_gl_code = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
+      await tallyDB.query(
+        "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+        {
           replacements: {
-            ladger_key: req.body.tds_gl_code[i],
+            ladger_key: req.body.ven_code,
             debit: "0",
-            credit: req.body.tds_amounts[i],
+            credit: Number(req.body.ven_amounts[i]).toFixed(2),
             module_used: vbt_key,
             insert_date: insert_data,
             which_module: "VBT04",
@@ -1472,37 +1641,25 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
             insert_by: insert_by,
           },
           type: tallyDB.QueryTypes.INSERT,
-          transaction: transaction,
-        });
-      }
-      // VENDOR
-      let insert_ven_gl = await tallyDB.query("INSERT INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module,  :effective_date, :insert_by)", {
-        replacements: {
-          ladger_key: req.body.ven_code,
-          debit: "0",
-          credit: Number(req.body.ven_amounts[i]).toFixed(2),
-          module_used: vbt_key,
-          insert_date: insert_data,
-          which_module: "VBT04",
-          effective_date: effective_data,
-          insert_by: insert_by,
-        },
-        type: tallyDB.QueryTypes.INSERT,
-        transaction: transaction,
-      });
-    } //END FOR LOOP
+          transaction,
+        }
+      );
+    } // END FOR LOOP
 
-    if (lastInsertedID) {
-      await tallyDB.query("UPDATE tally_vbt SET round_off_sign = :round_off_sign , round_off_amt = :round_off_amt , round_off_gl = :round_off_gl WHERE ID = :id", {
-        replacements: {
-          id: lastInsertedID,
-          round_off_sign: req.body.roundOffSign ?? "--",
-          round_off_amt: req.body.roundOffValue ?? "",
-          round_off_gl: "TP558350023869",
-        },
-        type: tallyDB.QueryTypes.UPDATE,
-        transaction: transaction
-      })
+    if (lastAffectedID) {
+      await tallyDB.query(
+        "UPDATE tally_vbt SET round_off_sign = :round_off_sign, round_off_amt = :round_off_amt, round_off_gl = :round_off_gl WHERE ID = :id",
+        {
+          replacements: {
+            id: lastAffectedID,
+            round_off_sign: req.body.roundOffSign ?? "--",
+            round_off_amt: req.body.roundOffValue ?? "",
+            round_off_gl: "TP558350023869",
+          },
+          type: tallyDB.QueryTypes.UPDATE,
+          transaction,
+        }
+      );
     }
 
     if (req.body.roundOffValue != 0) {
@@ -1532,18 +1689,26 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
         };
       }
 
-      let inset_round_gl = await tallyDB.query("Insert INTO `tally_ledger_data` (ladger_key, debit , credit, module_used, insert_date, which_module, ref_date, 	insert_by)VALUES (:ladger_key, :debit , :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)", {
-        replacements: repl,
-        type: tallyDB.QueryTypes.UPDATE,
-        transaction: transaction,
-      });
+      await tallyDB.query(
+        "INSERT INTO `tally_ledger_data` (ladger_key, debit, credit, module_used, insert_date, which_module, ref_date, insert_by) VALUES (:ladger_key, :debit, :credit, :module_used, :insert_date, :which_module, :effective_date, :insert_by)",
+        {
+          replacements: repl,
+          type: tallyDB.QueryTypes.INSERT,
+          transaction,
+        }
+      );
     }
 
     await transaction.commit();
-    return res.json({ status: "error", success: false, message: "VBT updated successfully" });
+    return res.json({
+      status: "success",
+      success: true,
+      message: "VBT updated successfully",
+    });
   } catch (error) {
-      return helper.errorResponse(res, error);
+    await transaction.rollback();
+    return helper.errorResponse(res, error);
   }
-})
+});
 
 module.exports = router;
