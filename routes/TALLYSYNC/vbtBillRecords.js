@@ -16,7 +16,7 @@ const VBT_TYPE_MAP = {
     VBT03: "Purchase-Import(Goods)",
     VBT07: "RCM-Invoice",
     VBT08: "Sales-Return",
-    VBT09: "FG-Purchase",
+    VBT09: "PurchaseC25",
   },
   Alwar: {
     VBT01: "Purchase",

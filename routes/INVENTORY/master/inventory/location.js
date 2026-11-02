@@ -431,7 +431,22 @@ router.post(
     try {
       let stmt = await invtDB.query(
         `SELECT 
-          location_main.*,
+          location_main.loc_name,
+          location_main.loc_under,
+          location_main.loc_type,
+          location_main.loc_storable,
+          location_main.loc_for,
+          location_main.loc_status,
+          location_main.loc_address,
+          location_main.bom_p_sku,
+          location_main.insert_date,
+          location_main.update_date,
+          location_main.updated_by,
+          location_main.insert_by AS inserted_by,
+          location_main.assigned_to,
+          location_main.loc_purpose,
+          location_main.loc_costcenter,
+          location_main.location_heading,
           loc2.loc_name AS parent_loc_name
         FROM location_main
         LEFT JOIN location_main AS loc2 
@@ -461,13 +476,13 @@ router.post(
           success: true,
           data: stmt,
         });
-      } else {
-        return res.json({
-          status: "error",
-          success: false,
-          message: "No data found",
-        });
       }
+
+      return res.json({
+        status: "error",
+        success: false,
+        message: "No data found",
+      });
     } catch (error) {
       return helper.errorResponse(res, error);
     }
