@@ -416,7 +416,7 @@ router.post(
   "/fetch_location_details",
   [auth.isAuthorized],
   async (req, res) => {
-    let validation = new Validator(req.body, {
+    const validation = new Validator(req.body, {
       location_key: "required",
     });
 
@@ -428,15 +428,37 @@ router.post(
       });
     }
 
+    const formatDate = (d) =>
+      d && d !== "--" && moment(d).isValid()
+        ? moment(d).format("DD-MM-YYYY")
+        : "--";
+
     try {
       let stmt = await invtDB.query(
         `SELECT 
-          location_main.*,
-          loc2.loc_name AS parent_loc_name
-        FROM location_main
-        LEFT JOIN location_main AS loc2 
-          ON location_main.parents_id = loc2.location_key
-        WHERE location_main.location_key = :key`,
+            lm.loc_name,
+            lm.loc_under,
+            lm.loc_type,
+            lm.loc_storable,
+            lm.loc_for,
+            lm.loc_status,
+            lm.loc_address,
+            lm.bom_p_sku,
+            lm.insert_date,
+            lm.update_date,
+            lm.updated_by,
+            al.user_name AS inserted_by,
+            lm.assigned_to,
+            lm.loc_purpose,
+            lm.loc_costcenter,
+            lm.location_heading,
+            parent.loc_name AS parent_loc_name
+          FROM location_main AS lm
+          LEFT JOIN location_main AS parent
+            ON lm.parents_id = parent.location_key
+          LEFT JOIN admin_login AS al
+            ON al.CustID = lm.inserted_by
+          WHERE lm.location_key = :key`,
         {
           replacements: { key: req.body.location_key },
           type: invtDB.QueryTypes.SELECT,
@@ -446,14 +468,8 @@ router.post(
       if (stmt.length > 0) {
         stmt = stmt.map((item) => ({
           ...item,
-          insert_date:
-            item.insert_date && item.insert_date !== "--"
-              ? moment(item.insert_date).format("DD-MM-YYYY")
-              : "--",
-          update_date:
-            item.update_date && item.update_date !== "--"
-              ? moment(item.update_date).format("DD-MM-YYYY")
-              : "--",
+          insert_date: formatDate(item.insert_date),
+          update_date: formatDate(item.update_date),
         }));
 
         return res.json({
@@ -461,13 +477,13 @@ router.post(
           success: true,
           data: stmt,
         });
-      } else {
-        return res.json({
-          status: "error",
-          success: false,
-          message: "No data found",
-        });
       }
+
+      return res.json({
+        status: "error",
+        success: false,
+        message: "No data found",
+      });
     } catch (error) {
       return helper.errorResponse(res, error);
     }
