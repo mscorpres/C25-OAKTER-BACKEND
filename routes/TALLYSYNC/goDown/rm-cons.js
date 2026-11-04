@@ -68,7 +68,7 @@ router.get("/consumption", async (req, res) => {
       });
     }
 
-  // RM → CONSUMPTION (OUT)
+    // RM → CONSUMPTION (OUT)
     const rmToConsStmt = await db.query(
       `SELECT
         components.c_name,
@@ -190,8 +190,16 @@ router.get("/consumption", async (req, res) => {
         all_sub_groups.sub_group_name,
         units.units_name,
         admin_login.user_name,
-        location_main.loc_name
+        location_main.loc_name,
+        products.p_sku AS product_sku,
+        products.p_name AS product_name,
+        COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) AS product_qty
       FROM rm_location
+      INNER JOIN mfg_production_3 m3
+        ON m3.mfg_pro_apr_transaction = rm_location.reversal_txn_id
+        AND m3.type = 'TRANSFER'
+      LEFT JOIN products 
+        ON products.p_sku = m3.mfg_pro_apr_sku
       LEFT JOIN fg_return 
         ON fg_return.fg_return_txn = rm_location.reversal_txn_id
       LEFT JOIN components 
@@ -207,7 +215,7 @@ router.get("/consumption", async (req, res) => {
       WHERE rm_location.in_module = 'IN-FGRETURN'
         AND DATE_FORMAT(rm_location.insert_date, '%Y-%m-%d') 
             BETWEEN :fromdate AND :todate
-        ${branch ? "AND rm_location.company_branch = :branch" : ""}
+        ${branch ? "AND rm_location.company_branch = :branch AND m3.company_branch = :branch" : ""}
         AND rm_location.components_id IS NOT NULL
         AND rm_location.qty > 0
         AND COALESCE(components.c_new_part_no, '') NOT LIKE '%RFP%'
@@ -222,8 +230,8 @@ router.get("/consumption", async (req, res) => {
       }
     );
 
-     // DIRECT PRODUCTION (IN) -- AS PROD
-     const directProductionStmt = await db.query(
+    // DIRECT PRODUCTION (IN) -- AS PROD
+    const directProductionStmt = await db.query(
       `SELECT 
         rm_location.*,
         rm_location.insert_date,
@@ -359,6 +367,50 @@ router.get("/consumption", async (req, res) => {
       }
     );
 
+     const stmt_other_fg_purchase = await db.query(
+      `SELECT 
+            mfg.ID,
+            mfg.mfg_pro_apr_sku AS product_key,
+            p.p_name,
+            p.p_sku,
+            p.p_hsncode,
+            units.units_name,
+            location_main.loc_name AS loc_in_name,
+            mfg.mfg_approve_in_qty AS qty,
+            mfg.mfg_pro_apr_fulldate AS insert_date,
+            CASE 
+              WHEN mfg.mfg_pro_apr_transaction IS NOT NULL AND mfg.mfg_pro_apr_transaction != '--' 
+              THEN mfg.mfg_pro_apr_transaction 
+              ELSE mfg.mfg_ref_transid_1 
+            END AS transaction_id,
+            mfg.in_fg_rate,
+            mfg.in_fg_invoice_id,
+            ven_basic_detail.ven_name AS ven_name
+           FROM mfg_production_3 mfg
+           LEFT JOIN products p 
+             ON mfg.mfg_pro_apr_sku = p.p_sku
+           LEFT JOIN units 
+             ON p.p_uom = units.units_id
+           LEFT JOIN location_main 
+             ON mfg.mfg_pro_location_in = location_main.location_key
+           LEFT JOIN ven_basic_detail 
+             ON mfg.in_vendor_name = ven_basic_detail.ven_register_id
+           WHERE mfg.vendor_type = 'o01'
+             AND mfg.fg_status = 'ACTIVE'
+             AND mfg.mfg_approve_in_qty > 0
+             AND DATE_FORMAT(mfg.mfg_pro_apr_fulldate, '%Y-%m-%d') BETWEEN :fromdate AND :todate
+             ${branch ? "AND mfg.company_branch = :branch" : ""}
+           ORDER BY mfg.mfg_pro_apr_fulldate DESC`,
+      {
+        replacements: {
+          fromdate: from.format("YYYY-MM-DD"),
+          todate: to.format("YYYY-MM-DD"),
+          ...(branch && { branch }),
+        },
+        type: db.QueryTypes.SELECT,
+      }
+    );
+
     // RM → CONSUMPTION (OUT)
     const type1Promises = rmToConsStmt.map(async (item) => {
       const purchaseRate = await calculateWARForTallyAPI(item.component_key, item.insert_date, item.row_id, db);
@@ -479,14 +531,17 @@ router.get("/consumption", async (req, res) => {
           voucherNumber: voucherNumber,
           voucherDate: moment(firstItem.insert_date).format("DD-MM-YYYY"),
           voucherType: "Stock Journal",
-          remark: "Being Material Recover from Product on production floor" || "--",
+          remark: "Being Material Recover from Product on production floor",
           type: "IN",
+          stockItemName: firstItem.product_sku || "null",
+          stockItemDescription: firstItem.product_name || "null",
+          productQuantity: Number(firstItem.product_qty || 0),
           inventoryEntries: inventoryEntries
         }))
       );
     }
 
-   const groupedDirectProduction = directProductionStmt.reduce((acc, item) => {
+    const groupedDirectProduction = directProductionStmt.reduce((acc, item) => {
       const dateKey = moment(item.insert_date).format("DDMMYY");
       if (!acc[dateKey]) {
         acc[dateKey] = [];
@@ -545,9 +600,7 @@ router.get("/consumption", async (req, res) => {
       const godownName = "C25_FG001";
 
       // Voucher number = transaction id + p_sku (same txn can have multiple SKUs)
-      const voucherNumber = `C25${item.out_transaction_id}_${item.p_sku }`
-       
-        
+      const voucherNumber = `C25${item.out_transaction_id}_${item.p_sku}`
 
       return {
         voucherNumber: voucherNumber,
@@ -646,13 +699,82 @@ router.get("/consumption", async (req, res) => {
       );
     }
 
-   
+
+     // 2. FIXED TYPE 7 PROMISES: Group by FG MIN transaction_id & format as 'IN' (+ Type)
+    const groupedOtherFgPurchase = stmt_other_fg_purchase.reduce((acc, item) => {
+      const key =
+        item.transaction_id && item.transaction_id !== "--"
+          ? item.transaction_id
+          : `FGMIN_${item.ID}`;
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(item);
+      return acc;
+    }, {});
+
+    const type7Promises = [];
+    for (const [txnId, group] of Object.entries(groupedOtherFgPurchase)) {
+      const firstItem = group[0];
+      const voucherNumber = `${txnId}`; // e.g., "FGIN/C25/26-27/0008"
+
+      const inventoryEntryPromises = group.map(async (item) => {
+        const dateStr = moment(item.insert_date)
+          .tz("Asia/Kolkata")
+          .format("YYYY-MM-DD HH:mm:ss");
+
+        // Use in_fg_rate from mfg_production_3 if > 0, else fallback to FG WAR calculation
+        const rate =
+          Number(item.in_fg_rate) > 0
+            ? Number(item.in_fg_rate)
+            : await fgWeightedAverageRate(item.product_key, dateStr, item.ID, db);
+
+        const qty = Number(item.qty || 0);
+        const amount = Number((qty * rate).toFixed(2));
+
+        // Matches C25 FG Godown convention (or use item.loc_in_name if dynamic)
+        const godownName = "C25_FG001";
+
+        return {
+          stockItemName: item.p_sku,
+          stockItemDescription: item.p_name,
+          subcategory: "Finished Goods",
+          godownName: godownName,
+          type: "FGMIN",
+          quantity: qty,
+          uom: item.units_name || "Pcs",
+          rate: Number(rate).toFixed(2),
+          amount: amount,
+          fgInTxnId: txnId,
+          vendorType: "Other",
+        };
+      });
+
+      const vendorLabel =
+        firstItem.ven_name ||
+        (firstItem.in_fg_invoice_id && firstItem.in_fg_invoice_id !== "--"
+          ? `Invoice ${firstItem.in_fg_invoice_id}`
+          : "Other FG MIN");
+
+      type7Promises.push(
+        Promise.all(inventoryEntryPromises).then((inventoryEntries) => ({
+          voucherNumber: voucherNumber,
+          voucherDate: moment(firstItem.insert_date).format("DD-MM-YYYY"),
+          voucherType: "Stock Journal FG",
+          remark: `Being Other FG MIN received (${vendorLabel})`,
+          inventoryEntries: inventoryEntries,
+        }))
+      );
+    }
+
+
     const type1Results = await Promise.all(type1Promises);
     const type2Results = await Promise.all(type2Promises);
     const type3Results = await Promise.all(type3Promises);
-     const type4Results = await Promise.all(type4Promises);
+    const type4Results = await Promise.all(type4Promises);
     const type5Results = await Promise.all(type5Promises);
     const type6Results = await Promise.all(type6Promises);
+    const type7Results = await Promise.all(type7Promises);
 
     
     const allVouchers = [];
@@ -691,7 +813,7 @@ router.get("/consumption", async (req, res) => {
     // type6 (RM CONSUMPTION) - already one voucher per job work order (jw_transaction_id)
     allVouchers.push(...type6Results);
 
-   
+    allVouchers.push(...type7Results);
     allVouchers.sort((a, b) => {
       const dateA = moment(a.voucherDate, "DD-MM-YYYY");
       const dateB = moment(b.voucherDate, "DD-MM-YYYY");
