@@ -193,7 +193,8 @@ router.get("/consumption", async (req, res) => {
         location_main.loc_name,
         products.p_sku AS product_sku,
         products.p_name AS product_name,
-        COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) AS product_qty
+        COALESCE(m3.qty_return, m3.mfg_approve_in_qty, 0) AS product_qty,
+        m3.in_fg_rate
       FROM rm_location
       INNER JOIN mfg_production_3 m3
         ON m3.mfg_pro_apr_transaction = rm_location.reversal_txn_id
@@ -535,7 +536,8 @@ router.get("/consumption", async (req, res) => {
           type: "IN",
           stockItemName: firstItem.product_sku || "null",
           stockItemDescription: firstItem.product_name || "null",
-          productQuantity: Number(firstItem.product_qty || 0),
+          productQuantity: Number(firstItem.product_qty || 0),rate:Number(firstItem.in_fg_rate),
+          amount: Number(firstItem.in_fg_rate) * Number(firstItem.product_qty || 0),
           inventoryEntries: inventoryEntries
         }))
       );
