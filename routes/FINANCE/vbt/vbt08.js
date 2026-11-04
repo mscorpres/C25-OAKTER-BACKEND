@@ -452,13 +452,14 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
     if (stmt_number.length > 0) {
       let suffix = parseInt(stmt_number[0].suffix, 10) + 1;
 
-      // VBT08: no leading zeros
+      // VBT08: 4-digit suffix with leading zeros
       vbt_no =
         stmt_number[0].prefix +
         "/" +
         stmt_number[0].session.replace("-", "") +
         "/" +
-        suffix;
+        String(suffix).padStart(4, "0");
+
     } else {
       let currYear = parseInt(
         new Date().getFullYear().toString().slice(-2),
@@ -467,7 +468,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
       let nextYear = (currYear + 1) % 100;
 
-      vbt_no = `FY/${currYear}${String(nextYear).padStart(2, "0")}/1`;
+      vbt_no = `FY/${currYear}${String(nextYear).padStart(2, "0")}/0001`;
     }
 
     await tallyDB.query(
