@@ -22,7 +22,7 @@ router.get("/pending", [auth.isAuthorized], async (req, res) => {
     }
 
     let stmt0 = await invtDB.query(
-      "SELECT `mfg_production_2`.`mfg_sku`, `mfg_production_2`.`mfg_ref_id`, `mfg_production_2`.`mfg_transaction`, `mfg_production_2`.`mfg_prod_type`, `mfg_production_2`.mfg_prod_planing_qty, `products`.`p_sku`, `products`.`p_name`, COALESCE( SUM( `mfg_production_2`.`mfg_prod_planing_qty` ), 0 ) AS totalReqQty, IF( table1.testAMT IS NULL, '0', table1.testAMT ) AS testAMT, `mfg_production_2`.`mfg_full_date` FROM `mfg_production_2` LEFT JOIN( SELECT `mfg_ref_id`, `mfg_transaction`, `mfg_prod_planing_qty`, COALESCE(SUM(`mfg_prod_in`), 0) AS testAMT, `mfg_prod_type` FROM `mfg_production_2` GROUP BY mfg_transaction,mfg_ref_id ) table1 ON `mfg_production_2`.`mfg_transaction` = table1.`mfg_transaction` AND `mfg_production_2`.`mfg_ref_id` = table1.`mfg_ref_id` LEFT JOIN products ON `mfg_production_2`.`mfg_sku` = `products`.`p_sku` WHERE `mfg_production_2`.`mfg_prod_type` = 'C' AND `mfg_production_2`.`company_branch` = :branch AND `mfg_production_2`.`mfg_sku_type` = 'FG' GROUP BY `mfg_production_2`.`mfg_transaction`,`mfg_production_2`.`step_count` ORDER BY `mfg_production_2`.`ID` DESC",
+      "SELECT `mfg_production_2`.`mfg_sku`,`location_main`.`loc_name` AS location, `mfg_production_2`.`mfg_ref_id`, `mfg_production_2`.`mfg_transaction`, `mfg_production_2`.`mfg_prod_type`, `mfg_production_2`.mfg_prod_planing_qty, `products`.`p_sku`, `products`.`p_name`, COALESCE( SUM( `mfg_production_2`.`mfg_prod_planing_qty` ), 0 ) AS totalReqQty, IF( table1.testAMT IS NULL, '0', table1.testAMT ) AS testAMT, `mfg_production_2`.`mfg_full_date` FROM `mfg_production_2` LEFT JOIN( SELECT `mfg_ref_id`, `mfg_transaction`, `mfg_prod_planing_qty`, COALESCE(SUM(`mfg_prod_in`), 0) AS testAMT, `mfg_prod_type` FROM `mfg_production_2` GROUP BY mfg_transaction,mfg_ref_id ) table1 ON `mfg_production_2`.`mfg_transaction` = table1.`mfg_transaction` AND `mfg_production_2`.`mfg_ref_id` = table1.`mfg_ref_id` LEFT JOIN location_main ON `mfg_production_2`.`mfg_con_location` = `location_main`.`location_key` LEFT JOIN products ON `mfg_production_2`.`mfg_sku` = `products`.`p_sku` WHERE `mfg_production_2`.`mfg_prod_type` = 'C' AND `mfg_production_2`.`company_branch` = :branch AND `mfg_production_2`.`mfg_sku_type` = 'FG' GROUP BY `mfg_production_2`.`mfg_transaction`,`mfg_production_2`.`step_count` ORDER BY `mfg_production_2`.`ID` DESC",
       { replacements: { branch: req.branch }, type: invtDB.QueryTypes.SELECT }
     );
 
@@ -73,6 +73,7 @@ router.get("/pending", [auth.isAuthorized], async (req, res) => {
                 mfg_ref_transid_1: item1.mfg_ref_transid_1,
                 typeOfPPR: typeOfPPR,
                 mfg_full_date: item0.mfg_full_date,
+                location:item0.location,
                 mfg_sku: item0.mfg_sku,
                 p_name: item0.p_name,
                 mfg_ref_id: item0.mfg_ref_id,
@@ -96,6 +97,7 @@ router.get("/pending", [auth.isAuthorized], async (req, res) => {
               typeOfPPR: typeOfPPR,
               mfg_full_date: item0.mfg_full_date,
               mfg_sku: item0.mfg_sku,
+              location:item0.location,
               p_name: item0.p_name,
               mfg_ref_id: item0.mfg_ref_id,
               mfg_prod_planing_qty: item0.mfg_prod_planing_qty,

@@ -4,6 +4,7 @@ const auth = require("../../middleware/auth");
 const { invtDB, otherDB } = require("../../config/db/connection");
 const Validator = require("validatorjs");
 const bcrypt = require("bcryptjs");
+const moment = require("moment")
 
 
 router.get("/fetchProfile/:userId", [auth.isAuthorized], async (req, res) => {
@@ -245,6 +246,8 @@ router.put("/updateUserSettings", [auth.isAuthorized], async (req, res) => {
       confirmPassword,
       twoStep,
       askPasswordChange,
+      attempt,
+      resetTime
     } = req.body;
 
     if (!userId) {
@@ -333,6 +336,37 @@ router.put("/updateUserSettings", [auth.isAuthorized], async (req, res) => {
       updateFields.push("ask_change_password = :askPasswordChange");
       replacements.askPasswordChange = value;
     }
+
+    // Reset Login Attempt
+    if (typeof attempt !== "undefined" && typeof resetTime !== "undefined") {
+      const shouldReset = [1, "1"].includes(attempt);
+      const shouldResetTime = [1, "1", true, "true"].includes(resetTime);
+
+      if (!shouldReset) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: "attempt must be 1 to reset login attempts.",
+          data: null,
+        });
+      }
+      if (!shouldResetTime) {
+        return res.json({
+          success: false,
+          status: "error",
+          message: "resetTime must be 1 to reset the password update date.",
+          data: null,
+        });
+      }
+
+      updateFields.push("Attempt = :attempt");
+      replacements.attempt = 0;
+
+      updateFields.push("lastPasswordUpdate = :lastPasswordUpdate");
+      replacements.lastPasswordUpdate = moment().format("YYYY-MM-DD");
+    }
+
+
 
     if (updateFields.length === 0) {
       return res.json({

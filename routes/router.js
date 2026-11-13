@@ -252,4 +252,5 @@ module.exports = function (app) {
   // ###########################
   // TICKET
   app.use("/ticket", require("./TICKET/ticket"));
+    app.use("/credential", require("./ADMIN/CREDENTIAL/credentialRoute"));
 };

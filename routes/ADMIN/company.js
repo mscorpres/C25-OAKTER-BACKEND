@@ -141,7 +141,7 @@ router.put("/user/edit", [auth.isAuthorized], async (req, res) => {
           {
             replacements: {
               status: req.body.status,
-              company_id: "COM0001",
+              company_id: "BROAKTRC25",
               user_id: req.body.userID,
               update_date: moment(new Date())
                 .tz("Asia/Kolkata")

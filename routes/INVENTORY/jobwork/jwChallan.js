@@ -683,7 +683,7 @@ router.post("/createJwChallan", [auth.isAuthorized], async (req, res) => {
 
     const avgRates = await Promise.all(
       pendingComponents.map((comp) =>
-        require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+        require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
           comp.component_key,
         ),
       ),

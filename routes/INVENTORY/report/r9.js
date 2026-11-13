@@ -60,9 +60,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
     }
 
     const formattedDate = moment(date, "DD-MM-YYYY").format("YYYY-MM-DD");
-    const { newWeightedAverageRate, CUTOFF_DATE } = require("../../../helper/utils/newAvgRate");
-    const isAfterCutoff =
-      new Date(formattedDate).getTime() > new Date(CUTOFF_DATE).getTime();
+    const { newWeightedAverageRate } = require("../../../helper/utils/newAvgRate");
 
     const [stmt1, stmt2] = await Promise.all([
       invtDB.query(
@@ -203,50 +201,29 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
           ]);
 
           let weightedPurchaseRate = 0;
-          if (isAfterCutoff) {
-            const lastTxn = await invtDB.query(
-              `SELECT ID, insert_date
-               FROM rm_location
-               WHERE components_id = :component
-                 AND DATE(insert_date) <= :date
-                 AND trans_type NOT IN ('CANCELLED', 'REJECTION', 'MIN_PENDING', 'REVERSE')
-               ORDER BY insert_date DESC, ID DESC
-               LIMIT 1`,
-              {
-                replacements: {
-                  component: item.component_key,
-                  date: formattedDate,
-                },
-                type: invtDB.QueryTypes.SELECT,
+          const lastTxn = await invtDB.query(
+            `SELECT ID, insert_date
+             FROM rm_location
+             WHERE components_id = :component
+               AND DATE(insert_date) <= :date
+               AND trans_type NOT IN ('CANCELLED', 'REJECTION', 'MIN_PENDING', 'REVERSE')
+             ORDER BY insert_date DESC, ID DESC
+             LIMIT 1`,
+            {
+              replacements: {
+                component: item.component_key,
+                date: formattedDate,
               },
-            );
+              type: invtDB.QueryTypes.SELECT,
+            },
+          );
 
-            if (lastTxn.length > 0) {
-              weightedPurchaseRate = await newWeightedAverageRate(
-                item.component_key,
-                lastTxn[0].insert_date,
-                lastTxn[0].ID,
-              );
-            }
-          } else {
-            const rateRow = await invtDB.query(
-              `SELECT w_avr_rate
-               FROM rm_location
-               WHERE components_id = :component_id
-                 AND trans_type IN ('INWARD', 'TRANSFER')
-                 AND in_module != 'IN-WO'
-                 AND DATE(insert_date) <= :date
-               ORDER BY ID DESC
-               LIMIT 1`,
-              {
-                replacements: {
-                  component_id: item.component_key,
-                  date: formattedDate,
-                },
-                type: invtDB.QueryTypes.SELECT,
-              },
+          if (lastTxn.length > 0) {
+            weightedPurchaseRate = await newWeightedAverageRate(
+              item.component_key,
+              lastTxn[0].insert_date,
+              lastTxn[0].ID,
             );
-            weightedPurchaseRate = parseFloat(rateRow?.[0]?.w_avr_rate) || 0;
           }
 
           const inward_all_qty = helper.number(stmt4?.[0]?.inward || 0);

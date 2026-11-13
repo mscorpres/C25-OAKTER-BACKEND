@@ -637,7 +637,7 @@ router.post("/getComponentByNameAndNo",  async (req, res) => {
 
     const finalData = await Promise.all(
       result.map(async (item) => {
-        const avgRate = await require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(
+        const avgRate = await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(
           item.component_key,
         );
 

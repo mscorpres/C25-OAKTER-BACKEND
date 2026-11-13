@@ -466,7 +466,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
           },
         ),
 
-        require("../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(item.component_key, todate),
+        require("../../../helper/utils/newAvgRate").newWeightedAverageRate(item.component_key, todate),
       ]);
 
       if (stmt6.length > 0) {
@@ -568,7 +568,7 @@ router.post("/", [auth.isAuthorized], async (req, res) => {
         bom_category = "N/A";
       }
 
-      let weightedPurchaseRate = await require("../../../helper/utils/avgRate").getWeightedPurchaseRate(item.component_key, moment(stmt3[0].inward_date).format("YYYY-MM-DD HH:mm:ss"));
+      let weightedPurchaseRate = (await require("../../../helper/utils/newAvgRate").newWeightedAverageRate(item.component_key, moment(stmt3[0].inward_date).format("YYYY-MM-DD HH:mm:ss"))).toFixed(2);
 
       data.push({
         totalOB: "-",

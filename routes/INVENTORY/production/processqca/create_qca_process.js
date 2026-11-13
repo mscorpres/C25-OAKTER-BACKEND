@@ -1291,7 +1291,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
               const [avgRate, inwardRows, outwardRows] = await Promise.all([
                 // require("../../../../helper/utils/avgRate")
                 //   .getWeightedPurchaseRate_May2026(comp.component_id),
-                require("../../../../helper/utils/newAvgRate").lastNewWeightedAverageRate(comp.component_id),
+                require("../../../../helper/utils/newAvgRate").newWeightedAverageRate(comp.component_id),
                 // ALL INWARD at consumption location
                 invtDB.query(
                   `SELECT COALESCE(SUM(qty + other_qty), 0) AS Inward
