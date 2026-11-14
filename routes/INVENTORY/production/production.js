@@ -3,13 +3,23 @@ const router = express.Router();
 
 
 let { invtDB } = require("../../../config/db/connection");
-
-
+const multer = require("multer");
+const xlsx = require("xlsx");
+const path = require("path");
+const fs = require("fs");
 const auth = require("../../../middleware/auth");
 const permission = require("../../../middleware/permission");
 
 
 const Validator = require("validatorjs");
+
+const storageWoBomBulk = multer.diskStorage({
+  destination: "tmp",
+  filename: function (req, file, cb) {
+    cb(null, "WOBOM" + Date.now() + Math.floor(Math.random() * 900 + 100) + path.extname(file.originalname));
+  },
+});
+const uploadWoBomBulk = multer({ storage: storageWoBomBulk });
 
 router.post("/fetchLocationForWitoutBom", [auth.isAuthorized], async (req, res) => {
   let stmt1 = await invtDB.query("SELECT locations FROM `location_allotted` WHERE  `loc_all_key` = :location_key", {
@@ -549,6 +559,221 @@ router.post("/CreateMatrialRequestWithBom", [auth.isAuthorized, auth.checkDuplic
     }
   } catch (err) {
       return helper.errorResponse(res, err);
+  }
+});
+
+
+// STEP 1 — Upload & validate Excel (returns enriched rows, no DB insert)
+// Excel columns: PART_CODE | PICK_LOCATION | ORDER_QTY | REMARK
+router.post("/createWithoutBomBulk/upload", [ uploadWoBomBulk.single("file")], async (req, res) => {
+  try {
+    const expectedColumns = ["PART_CODE", "PICK_LOCATION", "ORDER_QTY", "REMARK"];
+
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({
+        success:false,
+        status: "error",
+        message: "No file uploaded. Please upload an Excel file.",
+      });
+    }
+
+    const filePath = req.file.path;
+    const workbook = xlsx.readFile(filePath);
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+
+    const headers = [];
+    const range = xlsx.utils.decode_range(worksheet["!ref"]);
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = xlsx.utils.encode_cell({ r: 0, c: col });
+      const cell = worksheet[cellAddress];
+      headers.push(cell ? cell.v : null);
+    }
+
+    const mismatches = headers
+      .map((header, index) => {
+        if (header?.trim().toUpperCase() !== expectedColumns[index].toUpperCase()) {
+          return { column: `Column ${String.fromCharCode(65 + index)}`, actual: header, expected: expectedColumns[index] };
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    if (mismatches.length > 0) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ success:false, status: "error", message:"Excel column validation failed.", mismatches });
+    }
+
+    const rows = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+    const data = rows.slice(1).filter((r) => r && r.length > 0 && r[0]);
+
+    if (data.length === 0) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ success:false, status: "error", message:"No data rows found in Excel." });
+    }
+
+    for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+      const row = data[rowIndex];
+      const rowNumber = rowIndex + 2;
+
+      const qty = Number(row[2]);
+      if (isNaN(qty) || qty <= 0) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success:false,
+          status: "error",
+          message: `Excel column validation failed\nORDER_QTY must be a positive number at row number [${rowNumber}]`,
+        });
+      }
+
+      const remark = row[3];
+      if (remark && String(remark).length > 100) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success:false,
+          status: "error",
+          message:`Excel column validation failed\nREMARK must be less than 100 characters at row number [${rowNumber}]`,
+        });
+      }
+
+      // Resolve PICK_LOCATION by loc_name
+      const pickLocation = row[1];
+      const locationData = await invtDB.query(
+        "SELECT `loc_name`, `location_key` FROM `location_main` WHERE `loc_name` = :location AND `loc_status` = 'ACTIVE'",
+        { replacements: { location: pickLocation }, type: invtDB.QueryTypes.SELECT }
+      );
+
+      if (!locationData || locationData.length === 0) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success:false,
+          status: "error",
+          message:`Excel column validation failed\nPICK_LOCATION '${pickLocation}' does not exist in database at row number [${rowNumber}]`,
+        });
+      }
+
+      row[1] = { text: locationData[0].loc_name, value: locationData[0].location_key };
+
+      // Resolve PART_CODE by c_part_no
+      const partCode = row[0];
+      const partCodeData = await invtDB.query(
+        "SELECT `c_name`, `component_key`, `c_part_no`, `c_is_enabled` FROM `components` WHERE `c_part_no` = :partcode AND `c_type` = 'R'",
+        { replacements: { partcode: partCode }, type: invtDB.QueryTypes.SELECT }
+      );
+
+      if (!partCodeData || partCodeData.length === 0) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success:false,
+          status: "error",
+          message:`Excel column validation failed\nPART_CODE '${partCode}' does not exist in database at row number [${rowNumber}]`,
+        });
+      }
+
+      if (partCodeData[0].c_is_enabled === "N") {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          success:false,
+          status: "error",
+          message:`Excel column validation failed\nPART_CODE '${partCode}' is disabled at row number [${rowNumber}]`,
+        });
+      }
+
+      row[0] = { name: partCodeData[0].c_name, key: partCodeData[0].component_key, partNo: partCodeData[0].c_part_no };
+    }
+
+    fs.unlinkSync(filePath);
+
+    const transformedHeaders = headers.map((header) =>
+      header.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+    );
+
+    return res.json({
+      success:true,
+      status: "success",
+      message: "Excel file validated successfully.",
+      data: { headers: transformedHeaders, rows: data },
+    });
+  } catch (error) {
+    if (req.file && req.file.path) fs.unlinkSync(req.file.path);
+    return res.status(500).json({
+      success:false,
+      status: "error",
+      message: "Internal Error! If this persists, contact your system administrator.",
+      error: error.stack,
+    });
+  }
+});
+
+// STEP 2 — Save validated rows into material_request
+// Body: location, comment, rows[] (array from upload response)
+router.post("/createWithoutBomBulk/save", [auth.isAuthorized, auth.checkDuplicacy_db], async (req, res) => {
+  let validation = new Validator(req.body, { location: "required" });
+  if (validation.fails()) {
+    return res.json({ success:false, status: "error", message:"location is required" });
+  }
+
+  const rows = req.body.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.json({ success:false, status: "error", message:"No rows to save. Please upload Excel first."});
+  }
+
+  const t = await invtDB.transaction();
+  try {
+    const stmt1 = await invtDB.query("SELECT `ID` FROM `material_request` ORDER BY `ID` DESC LIMIT 1", {
+      type: invtDB.QueryTypes.SELECT,
+    });
+
+    let transactionID = helper.getUniqueNumber();
+    transactionID += (stmt1.length > 0 ? stmt1[0].ID : 0) + 1;
+
+    for (const row of rows) {
+      const componentKey = row[0]?.key;
+      const pickLocKey = row[1]?.value;
+      const qty = Number(row[2]);
+      const remark = row[3] || "";
+
+      if (!componentKey || !pickLocKey || qty <= 0) {
+        await t.rollback();
+        return res.json({ success:false, status: "error", message:"Invalid row data. Please re-upload Excel." });
+      }
+
+      await invtDB.query(
+        "INSERT INTO `material_request` (`company_branch`,`transaction_type`,`comment`,`components_key`,`req_debit`,`req_remark`,`insert_date`,`inserted_by`,`transaction_id`,`location_id`,`insert_full_date`,`pic_loc`) VALUES (:branch,'O',:comment,:component,:debit,:remark,:insertdate,:by,:key,:location,:fulldate,:pic_loc)",
+        {
+          replacements: {
+            branch: req.branch,
+            comment: req.body.comment || "",
+            component: componentKey,
+            debit: qty,
+            remark: remark,
+            insertdate: moment().format("YYYY-MM-DD HH:mm:ss"),
+            by: req.logedINUser,
+            key: transactionID,
+            location: req.body.location,
+            fulldate: moment().format("YYYY-MM-DD HH:mm:ss"),
+            pic_loc: pickLocKey,
+          },
+          type: invtDB.QueryTypes.INSERT,
+          transaction: t,
+        }
+      );
+    }
+
+    await t.commit();
+    return res.json({
+      success:true,
+      status: "success",
+      message: `${rows.length} item(s) submitted. Material Request Ref ID #${transactionID}`,
+    });
+  } catch (err) {
+    await t.rollback();
+    return res.json({
+      success:false,
+      status: "error",
+      message: "internally something happened wrong, contact to administrator",
+      error: err.stack,
+    });
   }
 });
 
