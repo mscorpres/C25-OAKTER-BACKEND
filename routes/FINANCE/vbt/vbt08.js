@@ -452,13 +452,12 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
     if (stmt_number.length > 0) {
       let suffix = parseInt(stmt_number[0].suffix, 10) + 1;
 
-      // VBT08: 4-digit suffix with leading zeros
       vbt_no =
         stmt_number[0].prefix +
         "/" +
         stmt_number[0].session.replace("-", "") +
         "/" +
-        String(suffix).padStart(4, "0");
+        suffix;
 
     } else {
       let currYear = parseInt(
@@ -468,7 +467,7 @@ router.post("/add_vbt08", [auth.isAuthorized], async (req, res) => {
 
       let nextYear = (currYear + 1) % 100;
 
-      vbt_no = `FY/${currYear}${String(nextYear).padStart(2, "0")}/0001`;
+      vbt_no = `FY/${currYear}${String(nextYear).padStart(2, "0")}/1`;
     }
 
     await tallyDB.query(
@@ -919,7 +918,7 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
   if (
     Math.abs(
       Number(req.body.bill_amount) -
-        Number(Number(total_ven_ammount).toFixed(2))
+      Number(Number(total_ven_ammount).toFixed(2))
     ) != 0
   ) {
     return res
@@ -932,7 +931,7 @@ router.put("/update", [auth.isAuthorized], async (req, res) => {
   if (
     Math.abs(
       Number(Number(total_credit).toFixed(2)) -
-        Number(Number(total_debit).toFixed(2))
+      Number(Number(total_debit).toFixed(2))
     ) != 0
   ) {
     return res
