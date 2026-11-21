@@ -103,13 +103,13 @@
         }
         
             
-            $dispatch_from = "Riot Labz Private Limited";
-            $dispatch_from_addr_1 = "B-36, Matasya Industrial Area";
-            $dispatch_from_addr_2 = "Alwar, Rajasthan - 301030<br />INDIA";
-            $dispatch_from_gst = "08AAHCR1005Q1Z6";
+            $dispatch_from = "RIOT LABZ PRIVATE LIMITED";
+            $dispatch_from_addr_1 = "C-25, Hosiery Complex Phase 2, Hosiery Complex,";
+            $dispatch_from_addr_2 = "Gautambuddha Nagar, Noida, Uttar Pradesh - 201305<br />INDIA";
+            $dispatch_from_gst = "09AAHCR1005Q1Z4";
             $dispatch_from_pan = "AAHCR1005Q";
-            $dispatch_from_state_name = "Rajasthan";
-            $dispatch_from_state_code = "8";
+            $dispatch_from_state_name = "Uttar Pradesh";
+            $dispatch_from_state_code = "09";
             $dispatch_from_cin = "U29253DL2014PTC273460";
     // HEADER DETAILS
     $sql = $con->prepare("SELECT * FROM `wo_scrap_challan` WHERE `wo_challan_id` = :challan_id LIMIT 1");
@@ -353,7 +353,7 @@
         while ($number_of_page > $count) {
             
             if($count+1 >= $number_of_page) {
-                $page_end = '<p style="text-align:center; font-family: verdana; font-size: 10px">.: Subject to Alwar Judiciary. :.</p>';
+                $page_end = '<p style="text-align:center; font-family: verdana; font-size: 10px">.: Subject to Noida Judiciary. :.</p>';
             } else {
                 $page_end = '<p style="text-align:right; font-family: verdana; font-size: 10px">... to be continued on page no. '.($count+2).'</p> <pagebreak/>';
             }
