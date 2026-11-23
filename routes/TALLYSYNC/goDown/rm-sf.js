@@ -250,7 +250,7 @@ router.get("/stock_journal", async (req, res) => {
     // Determine location configuration based on GST for Query 4
     const query4LocOut = "1789794097830";
     // SF024 virtual 1765369161652; merge prior != + NOT IN lists
-    const query4LocInNotIn = ["1789794097830", "1765369161652", "1690877340601", "20210920102942", "1690871989601"];
+    const query4LocInNotIn = ["1789794097830", "1765369161652", "1690877340601", "20210920102942", "1690871989601","1785149544978","1785149580453"];
 
     const rejToProdStmt = await db.query(
       `SELECT 
