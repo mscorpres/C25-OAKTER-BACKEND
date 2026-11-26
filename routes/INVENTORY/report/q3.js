@@ -783,7 +783,7 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 			  });
   
 			  rateResults.forEach((row) => {
-				if (row.in_fg_rate) {
+				if (Number(row.in_fg_rate) > 0) {
 				  mfgRatesMap.set(row.mfg_transaction, row.in_fg_rate);
 				}
 			  });
@@ -837,6 +837,9 @@ router.get("/location", [auth.isAuthorized], async (req, res) => {
 				location_in = item.loc_in_name || "--";
 				location_out = "--";
 				mode = "FGIN";
+				// MFG rate (mfg_production_2, refurb/RFP ke bina) dikhao — socket SKU movement report jaisa;
+				// na ho to mfg_production_3 ka saved rate
+				rate = mfgRatesMap.get(item.mfg_ref_transid_2) || item.in_fg_rate || 0;
 				weightedSKURate =  0;
 			  } else if (item.transaction_type == "FGMIN") {
 				transaction_type = IN;
