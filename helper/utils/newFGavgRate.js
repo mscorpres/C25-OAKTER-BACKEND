@@ -90,7 +90,7 @@ async function resolveKeys(skuKey, db = invtDB) {
 }
 
 // ─── SKU ki transactions (date/ID order me) + WAR calculate ─────────────
-async function calculateFgWAR(skuKey, dateCondition, extraReplacements, db = invtDB) {
+async function calculateFgWAR(skuKey, dateCondition, extraReplacements, db = invtDB, transaction = null) {
   const { pSku, productKey } = await resolveKeys(skuKey, db);
 
   const transactions = await db.query(
@@ -115,6 +115,7 @@ async function calculateFgWAR(skuKey, dateCondition, extraReplacements, db = inv
     {
       replacements: { pSku, productKey, ...extraReplacements },
       type: db.QueryTypes.SELECT,
+      ...(transaction ? { transaction } : {}),
     },
   );
 
@@ -136,6 +137,7 @@ exports.fgWeightedAverageRate = async function (
   date = null,
   currentID = null,
   db = invtDB,
+  transaction = null, // optional — uncommitted rows dekhne ke liye (repair scripts)
 ) {
   try {
     return await calculateFgWAR(
@@ -149,6 +151,7 @@ exports.fgWeightedAverageRate = async function (
         currentID: currentID ?? Number.MAX_SAFE_INTEGER,
       },
       db,
+      transaction,
     );
   } catch (error) {
     console.error("Error calculating FG WAR:", error);
