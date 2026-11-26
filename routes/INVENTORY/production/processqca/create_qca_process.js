@@ -1278,7 +1278,7 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
 
         //Insert data into rm_location
         if (stmt1.length > 0) {
-          let bomComponents = await invtDB.query("SELECT qty,component_id FROM bom_quantity WHERE subject_under = :bomid AND bom_status = 'A' ", {
+          let bomComponents = await invtDB.query("SELECT bom_quantity.qty, bom_quantity.component_id, components.c_new_part_no FROM bom_quantity LEFT JOIN components ON components.component_key = bom_quantity.component_id WHERE bom_quantity.subject_under = :bomid AND bom_quantity.bom_status = 'A' ", {
             replacements: { bomid: bom_id },
             type: invtDB.QueryTypes.SELECT,
           });
@@ -1332,8 +1332,12 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
           );
 
           // ── 8. Stock validation then serial inserts (must stay serial — tx) ────
+          const { isRFPComponent } = require("../../../../helper/utils/newAvgRate");
           for (const { comp, consumption_quantity, avgRate, inward, outward } of componentData) {
-            productAvgRate += avgRate * comp.qty;
+            // SFG rate per unit = Σ(bom_qty × component WAR) — refurb (RFP) exclude
+            if (!isRFPComponent(comp.c_new_part_no)) {
+              productAvgRate += (Number(avgRate) || 0) * (Number(comp.qty) || 0);
+            }
 
             if (helper.number(consumption_quantity) <= 0) continue;
 
@@ -1380,13 +1384,26 @@ router.post("/lot_transfer", [auth.isAuthorized], async (req, res) => {
                   step_count: stepcount,
                   subject: bom_id,
                   remark: "--",
-                  in_po_rate: productAvgRate,
+                  // consumption row par us component ka apna WAR (pehle galti se running SFG total ja raha tha)
+                  in_po_rate: avgRate || 0,
                 },
                 type: invtDB.QueryTypes.INSERT,
                 transaction,
               },
             );
           }
+
+          // Manufacturing (SFG/FG) rate save karo — pehle 0 reh jata tha
+          await invtDB.query("UPDATE mfg_production_2 SET in_fg_rate = :rate WHERE mfg_transaction = :mfg_id AND company_branch = :branch", {
+            replacements: { rate: productAvgRate, mfg_id: mfg_transaction, branch: "BROAKTRC25" },
+            type: invtDB.QueryTypes.UPDATE,
+            transaction,
+          });
+          await invtDB.query("UPDATE mfg_production_3 SET in_fg_rate = :rate WHERE mfg_ref_transid_2 = :mfg_id AND company_branch = :branch AND type = 'IN'", {
+            replacements: { rate: productAvgRate, mfg_id: mfg_transaction, branch: "BROAKTRC25" },
+            type: invtDB.QueryTypes.UPDATE,
+            transaction,
+          });
         }
 
         // ── 9. Update execution quantity ─────────────────────────────────────────

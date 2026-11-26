@@ -85,7 +85,7 @@ function isOutwardTxn(txn) {
  * @param {object} extraReplacements
  * @param {object} db - sequelize connection (default invtDB)
  */
-async function fetchTransactions(componentKey, extraCondition = "", extraReplacements = {}, db = invtDB) {
+async function fetchTransactions(componentKey, extraCondition = "", extraReplacements = {}, db = invtDB, transaction = null) {
   return db.query(
     `SELECT
               rm_location.ID,
@@ -111,9 +111,19 @@ async function fetchTransactions(componentKey, extraCondition = "", extraReplace
     {
       replacements: { componentKey, ...extraReplacements },
       type: db.QueryTypes.SELECT,
+      ...(transaction ? { transaction } : {}),
     },
   );
 }
+
+/**
+ * Refurb (RFP) component — FG/SFG rate me count nahi hota.
+ * Pehchaan: components.c_new_part_no me "RFP" ho.
+ */
+function isRFPComponent(newPartNo) {
+  return typeof newPartNo === "string" && newPartNo.toUpperCase().includes("RFP");
+}
+exports.isRFPComponent = isRFPComponent;
 
 /**
  * WAR engine — New Logic without Opening.
@@ -166,6 +176,7 @@ function runWAR(transactions) {
  *        sirf is rm_location.ID tak (us row ko include karke)
  * @param {boolean} withStock - true → { rate, qty } (running stock qty bhi)
  * @param {object} db - Optional — branch DB (TallySync GST wise), default invtDB
+ * @param {object} transaction - Optional — sequelize transaction (uncommitted rows dekhne ke liye)
  * @returns {Promise<number|{ rate: number, qty: number }>}
  */
 exports.newWeightedAverageRate = async function (
@@ -174,6 +185,7 @@ exports.newWeightedAverageRate = async function (
   currentID = null,
   withStock = false,
   db = invtDB,
+  transaction = null,
 ) {
   try {
     if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -190,7 +202,7 @@ exports.newWeightedAverageRate = async function (
       condition = `AND rm_location.insert_date <= :date`;
     }
 
-    const transactions = await fetchTransactions(componentKey, condition, { date, currentID }, db);
+    const transactions = await fetchTransactions(componentKey, condition, { date, currentID }, db, transaction);
     const result = runWAR(transactions);
     return withStock ? result : result.rate;
   } catch (error) {
@@ -224,6 +236,7 @@ module.exports.calculateRate = calculateRate;
 
 /**
  * FG ka rate calculate karo uske components ke WAR se.
+ * Refurb (RFP) components FG rate me count nahi hote.
  * @param {string} mfgRefTransId2 - item.mfg_ref_transid_2
  * @param {number|string} inQty   - item.in_qty (FG quantity)
  * @returns {Promise<number>} - calculated FG rate per unit
@@ -235,10 +248,12 @@ exports.calculateFGRate = async function (mfgRefTransId2, inQty) {
     `SELECT rm_location.ID AS row_id,
             rm_location.insert_date AS mfg_date,
             rm_location.qty,
-            components.component_key
+            components.component_key,
+            components.c_new_part_no
      FROM rm_location
      LEFT JOIN components ON rm_location.components_id = components.component_key
-     WHERE rm_location.mfg_ppr_trans_id_2 = :mfg_no`,
+     WHERE rm_location.mfg_ppr_trans_id_2 = :mfg_no
+       AND rm_location.trans_type = 'CONSUMPTION'`,
     {
       replacements: { mfg_no: mfgRefTransId2 },
       type: invtDB.QueryTypes.SELECT,
@@ -251,6 +266,7 @@ exports.calculateFGRate = async function (mfgRefTransId2, inQty) {
   let totalValue = 0;
 
   for (const comp of compRows) {
+    if (isRFPComponent(comp.c_new_part_no)) continue;
     const wvr = await exports.newWeightedAverageRate(
       comp.component_key,
       comp.mfg_date,
