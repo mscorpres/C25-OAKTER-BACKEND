@@ -363,7 +363,7 @@ router.post(
       }
 
       return res.json({ status: "success", success: true, data: data });
-    } catch (error) {
+    } catch (err) {
       return helper.errorResponse(res, err);
     }
   },

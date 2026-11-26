@@ -1650,7 +1650,7 @@ router.post(
               );
 
               // Skip RFP components from weighted rate calculation
-              const isRFP = componentCheck.length > 0 && componentCheck[0].c_new_part_no && componentCheck[0].c_new_part_no.includes('RFP');
+              const isRFP = componentCheck.length > 0 && require("../../../helper/utils/newAvgRate").isRFPComponent(componentCheck[0].c_new_part_no);
 
               // Calculate weighted cost: cons_qty × weighted_rate (only consumed qty, not reject)
               // Only for non-RFP components
